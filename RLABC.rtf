@@ -1,0 +1,427 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 .SFNS-Regular;\f1\fnil\fcharset0 .AppleSystemUIFontMonospaced-Regular;\f2\fswiss\fcharset0 Helvetica;
+\f3\fmodern\fcharset0 Courier;\f4\fnil\fcharset0 .SFNS-Bold;\f5\froman\fcharset0 TimesNewRomanPSMT;
+\f6\fnil\fcharset0 HelveticaNeue-Bold;}
+{\colortbl;\red255\green255\blue255;\red14\green14\blue14;\red151\green0\blue126;\red0\green0\blue0;
+\red13\green100\blue1;\red181\green0\blue19;\red20\green0\blue196;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\cssrgb\c6700\c6700\c6700;\cssrgb\c66667\c5098\c56863;\csgray\c0;
+\cssrgb\c0\c45490\c0;\cssrgb\c76863\c10196\c8627;\cssrgb\c10980\c0\c81176;\cssrgb\c0\c0\c0;}
+\margl1440\margr1440\vieww24940\viewh17900\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 Below is an example of a complete Python script that implements a simplified version of your RL\uc0\u8208 accelerated FES exploration idea using PyTorch. In this example:\
+\
+\'95 We define a \'93Muller\'96Brown\'94 potential function (using a standard four-term form) and add a mechanism for depositing local Gaussian biases.\
+\'95 We implement a simple Langevin dynamics integrator that uses the combined potential (Muller\'96Brown plus all deposited Gaussian biases).\
+\'95 We build an OpenAI Gym\'96like environment class (
+\f1 MullerBrownEnv
+\f0 ) that computes the local \'93observation\'94 (taken as the potential at the current point and at four neighboring points), applies the deposited bias, and then takes a Langevin step. In this simple version the reward is defined as the sum of the variances (in x and y) over the visited positions\'97a proxy for improved spread in sampling.\
+\'95 We code a basic DDPG agent (with separate actor and critic networks, a simple replay buffer, and an update routine) that maps the local observation (a 10-dimensional vector) to three numbers that parameterize a 2D Gaussian bias (two \'93variance\'94 parameters and one \'93correlation\'94 parameter). The actor uses softplus/tanh to ensure appropriate output ranges.\
+\'95 Finally, a training loop is provided that runs multiple episodes.\
+\
+Note that this code is a simplified \'93proof\uc0\u8208 of\u8208 concept.\'94 In practice you may wish to (a) refine the physics, (b) adjust the state representation and reward function, and (c) fine\u8208 tune the RL algorithm. You may also extend the Gaussian bias deposition to mimic the exact ABC scheme you envision.\
+\
+Below is the full code:\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f3\fs28 \cf3 import\cf4  numpy \cf3 as\cf4  np\
+\cf3 import\cf4  torch\
+\cf3 import\cf4  torch.nn \cf3 as\cf4  nn\
+\cf3 import\cf4  torch.optim \cf3 as\cf4  optim\
+\cf3 import\cf4  torch.nn.functional \cf3 as\cf4  F\
+\cf3 import\cf4  random\
+\cf3 from\cf4  collections \cf3 import\cf4  deque\
+\
+\cf5 ###############################\cf4 \
+\cf5 # Potential and Bias Functions\cf4 \
+\cf5 ###############################\cf4 \
+\
+\cf3 def\cf4  muller_brown(x, y):\
+    \cf6 """\
+    Compute the Muller-Brown potential at (x, y) using a 4-term expansion.\
+    The parameters below are taken from the original formulation.\
+    x, y can be scalars or numpy arrays.\
+    """\cf4 \
+    \cf5 # Parameters for 4 terms\cf4 \
+    A = np.array([-\cf7 200\cf4 , -\cf7 100\cf4 , -\cf7 170\cf4 , \cf7 15\cf4 ])\
+    a = np.array([-\cf7 1\cf4 , -\cf7 1\cf4 , -\cf7 6.5\cf4 , \cf7 0.7\cf4 ])\
+    b = np.array([\cf7 0\cf4 , \cf7 0\cf4 , \cf7 11\cf4 , \cf7 0.6\cf4 ])\
+    c = np.array([-\cf7 10\cf4 , -\cf7 10\cf4 , -\cf7 6.5\cf4 , \cf7 0.7\cf4 ])\
+    x0 = np.array([\cf7 1\cf4 , \cf7 0\cf4 , -\cf7 0.5\cf4 , -\cf7 1\cf4 ])\
+    y0 = np.array([\cf7 0\cf4 , \cf7 0.5\cf4 , \cf7 1.5\cf4 , \cf7 1\cf4 ])\
+    \
+    V = \cf7 0.0\cf4 \
+    \cf3 for\cf4  i \cf3 in\cf4  range(\cf7 4\cf4 ):\
+        V += A[i] * np.exp(a[i]*(x - x0[i])**\cf7 2\cf4  + b[i]*(x - x0[i])*(y - y0[i]) + c[i]*(y - y0[i])**\cf7 2\cf4 )\
+    \cf3 return\cf4  V\
+\
+\cf3 def\cf4  gaussian_bias(x, y, center, sigma_x, sigma_y, rho, height=\cf7 1.0\cf4 ):\
+    \cf6 """\
+    Compute the value of a 2D Gaussian bias function at position (x,y) given:\
+      center: (cx, cy) the center where bias was deposited,\
+      sigma_x, sigma_y: standard deviations,\
+      rho: correlation coefficient.\
+    """\cf4 \
+    cx, cy = center\
+    dx = x - cx\
+    dy = y - cy\
+    \
+    \cf5 # Construct covariance matrix (ensuring positive definiteness)\cf4 \
+    \cf5 # Sigma = [[sigma_x^2, rho*sigma_x*sigma_y],\cf4 \
+    \cf5 #          [rho*sigma_x*sigma_y, sigma_y^2]]\cf4 \
+    \cf5 # Its determinant:\cf4 \
+    det = sigma_x**\cf7 2\cf4  * sigma_y**\cf7 2\cf4  * (\cf7 1\cf4  - rho**\cf7 2\cf4  + \cf7 1e-6\cf4 )\
+    \cf5 # Inverse of Sigma:\cf4 \
+    inv11 = sigma_y**\cf7 2\cf4  / det\
+    inv22 = sigma_x**\cf7 2\cf4  / det\
+    inv12 = -rho * sigma_x * sigma_y / det\
+    \
+    Q = inv11 * dx**\cf7 2\cf4  + \cf7 2\cf4 *inv12 * dx * dy + inv22 * dy**\cf7 2\cf4 \
+    \cf3 return\cf4  height * np.exp(-\cf7 0.5\cf4  * Q)\
+\
+\cf3 def\cf4  total_potential(x, y, bias_list):\
+    \cf6 """\
+    Compute the total potential at (x, y) by summing the Muller-Brown potential\
+    and all Gaussian biases deposited so far.\
+    """\cf4 \
+    V = muller_brown(x, y)\
+    \cf3 for\cf4  bias \cf3 in\cf4  bias_list:\
+        center, sigma_x, sigma_y, rho, height = bias\
+        V += gaussian_bias(x, y, center, sigma_x, sigma_y, rho, height)\
+    \cf3 return\cf4  V\
+\
+\cf5 ###############################\cf4 \
+\cf5 # Environment: MullerBrownEnv\cf4 \
+\cf5 ###############################\cf4 \
+\
+\cf3 class\cf4  MullerBrownEnv:\
+    \cf3 def\cf4  __init__(self, dt=\cf7 0.01\cf4 , gamma=\cf7 1.0\cf4 , T=\cf7 0.1\cf4 , max_steps=\cf7 200\cf4 , neighbor_delta=\cf7 0.1\cf4 ):\
+        self.dt = dt          \cf5 # time step for Langevin dynamics\cf4 \
+        self.gamma = gamma    \cf5 # friction coefficient\cf4 \
+        self.T = T            \cf5 # temperature\cf4 \
+        self.max_steps = max_steps\
+        self.neighbor_delta = neighbor_delta  \cf5 # distance to sample neighbor points\cf4 \
+        \
+        self.noise_std = np.sqrt(\cf7 2\cf4  * T * dt / gamma)\
+        self.reset()\
+    \
+    \cf3 def\cf4  reset(self):\
+        self.current_pos = np.array([\cf7 0.0\cf4 , \cf7 0.0\cf4 ])\
+        self.visited_positions = [self.current_pos.copy()]\
+        self.bias_list = []   \cf5 # store deposited biases as tuples: (center, sigma_x, sigma_y, rho, height)\cf4 \
+        self.step_count = \cf7 0\cf4 \
+        \cf3 return\cf4  self.get_observation()\
+    \
+    \cf3 def\cf4  get_observation(self):\
+        \cf6 """\
+        Construct the observation consisting of the potential at:\
+          - the current position,\
+          - up, down, left, and right positions (neighbors)\
+        Also include the temperature information (here appended five times).\
+        The observation is a 10-dimensional numpy array.\
+        """\cf4 \
+        x, y = self.current_pos\
+        delta = self.neighbor_delta\
+        points = [\
+            (x, y),\
+            (x, y + delta),\
+            (x, y - delta),\
+            (x - delta, y),\
+            (x + delta, y)\
+        ]\
+        obs = []\
+        \cf3 for\cf4  pt \cf3 in\cf4  points:\
+            V_pt = total_potential(pt[\cf7 0\cf4 ], pt[\cf7 1\cf4 ], self.bias_list)\
+            obs.append(V_pt)\
+        \cf5 # Append the temperature (T) for each point (could be useful if T varied spatially)\cf4 \
+        obs += [self.T] * len(points)\
+        \cf3 return\cf4  np.array(obs, dtype=np.float32)\
+    \
+    \cf3 def\cf4  compute_numerical_force(self, pos, eps=\cf7 1e-5\cf4 ):\
+        \cf6 """\
+        Compute the force at position pos by finite differences.\
+        F = -grad(V_total)\
+        """\cf4 \
+        x, y = pos\
+        V_center = total_potential(x, y, self.bias_list)\
+        V_x_plus = total_potential(x + eps, y, self.bias_list)\
+        V_x_minus = total_potential(x - eps, y, self.bias_list)\
+        V_y_plus = total_potential(x, y + eps, self.bias_list)\
+        V_y_minus = total_potential(x, y - eps, self.bias_list)\
+        \
+        dV_dx = (V_x_plus - V_x_minus) / (\cf7 2\cf4  * eps)\
+        dV_dy = (V_y_plus - V_y_minus) / (\cf7 2\cf4  * eps)\
+        force = -np.array([dV_dx, dV_dy])\
+        \cf3 return\cf4  force\
+    \
+    \cf3 def\cf4  step(self, action):\
+        \cf6 """\
+        Take one environment step.\
+        The input action is a numpy array of shape (3, ) corresponding to raw output from the RL agent:\
+          [raw_sigma_x, raw_sigma_y, raw_rho]\
+        We transform these outputs to valid parameters:\
+          sigma_x, sigma_y > 0 (using softplus)\
+          rho in (-1,1) (using tanh)\
+        Then we deposit a new Gaussian bias at the current position with these parameters.\
+        After depositing the bias, we compute the force (from the total potential) and then take a\
+        Langevin dynamics step.\
+        """\cf4 \
+        self.step_count += \cf7 1\cf4 \
+        \
+        \cf5 # Transform raw action outputs\cf4 \
+        \cf5 # Here we use numpy\'92s exponential for softplus (a rough approximation)\cf4 \
+        sigma_x = np.log(\cf7 1\cf4  + np.exp(action[\cf7 0\cf4 ]))\
+        sigma_y = np.log(\cf7 1\cf4  + np.exp(action[\cf7 1\cf4 ]))\
+        rho = np.tanh(action[\cf7 2\cf4 ])\
+        \
+        \cf5 # Deposit the new Gaussian bias at the current position\cf4 \
+        bias = (self.current_pos.copy(), sigma_x, sigma_y, rho, \cf7 1.0\cf4 )  \cf5 # fixed height = 1.0\cf4 \
+        self.bias_list.append(bias)\
+        \
+        \cf5 # Compute force at current position from the total (biased) potential\cf4 \
+        force = self.compute_numerical_force(self.current_pos)\
+        \
+        \cf5 # Langevin dynamics step: deterministic + stochastic update\cf4 \
+        noise = np.random.normal(loc=\cf7 0.0\cf4 , scale=self.noise_std, size=\cf7 2\cf4 )\
+        self.current_pos = self.current_pos + (force / self.gamma) * self.dt + noise\
+        \
+        self.visited_positions.append(self.current_pos.copy())\
+        \
+        \cf5 # Compute reward as the sum of variances along x and y from visited positions\cf4 \
+        positions = np.array(self.visited_positions)\
+        var_x = np.var(positions[:, \cf7 0\cf4 ])\
+        var_y = np.var(positions[:, \cf7 1\cf4 ])\
+        reward = var_x + var_y\
+        \
+        \cf5 # Get next observation\cf4 \
+        obs = self.get_observation()\
+        \
+        \cf5 # Episode termination when max_steps reached\cf4 \
+        done = self.step_count >= self.max_steps\
+        \
+        \cf3 return\cf4  obs, reward, done\
+\
+\cf5 ###############################\cf4 \
+\cf5 # DDPG Agent Components\cf4 \
+\cf5 ###############################\cf4 \
+\
+\cf5 # Actor Network: maps observation to action (3 numbers).\cf4 \
+\cf3 class\cf4  Actor(nn.Module):\
+    \cf3 def\cf4  __init__(self, state_dim, action_dim, hidden_dim=\cf7 64\cf4 ):\
+        super(Actor, self).__init__()\
+        self.fc1 = nn.Linear(state_dim, hidden_dim)\
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)\
+        self.fc3 = nn.Linear(hidden_dim, action_dim)\
+    \
+    \cf3 def\cf4  forward(self, state):\
+        x = F.relu(self.fc1(state))\
+        x = F.relu(self.fc2(x))\
+        \cf5 # No activation on final layer; we will apply transformations later.\cf4 \
+        x = self.fc3(x)\
+        \cf3 return\cf4  x\
+\
+\cf5 # Critic Network: evaluates Q(state, action)\cf4 \
+\cf3 class\cf4  Critic(nn.Module):\
+    \cf3 def\cf4  __init__(self, state_dim, action_dim, hidden_dim=\cf7 64\cf4 ):\
+        super(Critic, self).__init__()\
+        self.fc1 = nn.Linear(state_dim + action_dim, hidden_dim)\
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)\
+        self.fc3 = nn.Linear(hidden_dim, \cf7 1\cf4 )\
+    \
+    \cf3 def\cf4  forward(self, state, action):\
+        x = torch.cat([state, action], dim=-\cf7 1\cf4 )\
+        x = F.relu(self.fc1(x))\
+        x = F.relu(self.fc2(x))\
+        q_value = self.fc3(x)\
+        \cf3 return\cf4  q_value\
+\
+\cf5 # Simple Replay Buffer\cf4 \
+\cf3 class\cf4  ReplayBuffer:\
+    \cf3 def\cf4  __init__(self, capacity=\cf7 100000\cf4 ):\
+        self.capacity = capacity\
+        self.buffer = deque(maxlen=capacity)\
+    \
+    \cf3 def\cf4  push(self, state, action, reward, next_state, done):\
+        \cf5 # Store transitions as tuples\cf4 \
+        self.buffer.append((state, action, reward, next_state, done))\
+    \
+    \cf3 def\cf4  sample(self, batch_size):\
+        batch = random.sample(self.buffer, batch_size)\
+        state, action, reward, next_state, done = map(np.stack, zip(*batch))\
+        \cf3 return\cf4  state, action, reward, next_state, done\
+    \
+    \cf3 def\cf4  __len__(self):\
+        \cf3 return\cf4  len(self.buffer)\
+\
+\cf5 # DDPG Agent wrapper\cf4 \
+\cf3 class\cf4  DDPGAgent:\
+    \cf3 def\cf4  __init__(self, state_dim, action_dim, hidden_dim=\cf7 64\cf4 , actor_lr=\cf7 1e-3\cf4 , critic_lr=\cf7 1e-3\cf4 , gamma=\cf7 0.99\cf4 , tau=\cf7 0.005\cf4 , device=\cf6 'cpu'\cf4 ):\
+        self.device = device\
+        self.gamma = gamma\
+        self.tau = tau\
+        \
+        self.actor = Actor(state_dim, action_dim, hidden_dim).to(self.device)\
+        self.actor_target = Actor(state_dim, action_dim, hidden_dim).to(self.device)\
+        self.actor_target.load_state_dict(self.actor.state_dict())\
+        \
+        self.critic = Critic(state_dim, action_dim, hidden_dim).to(self.device)\
+        self.critic_target = Critic(state_dim, action_dim, hidden_dim).to(self.device)\
+        self.critic_target.load_state_dict(self.critic.state_dict())\
+        \
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)\
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_lr)\
+        \
+        self.replay_buffer = ReplayBuffer()\
+        self.batch_size = \cf7 64\cf4 \
+        self.action_dim = action_dim\
+    \
+    \cf3 def\cf4  select_action(self, state, noise_std=\cf7 0.1\cf4 ):\
+        \cf6 """\
+        Select action given state (as a numpy array). Returns a numpy array.\
+        """\cf4 \
+        state_tensor = torch.FloatTensor(state).unsqueeze(\cf7 0\cf4 ).to(self.device)\
+        self.actor.eval()\
+        \cf3 with\cf4  torch.no_grad():\
+            action = self.actor(state_tensor)\
+        self.actor.train()\
+        action = action.cpu().data.numpy().flatten()\
+        \
+        \cf5 # Add exploration noise\cf4 \
+        action += np.random.normal(\cf7 0\cf4 , noise_std, size=self.action_dim)\
+        \cf3 return\cf4  action\
+    \
+    \cf3 def\cf4  update(self):\
+        \cf3 if\cf4  len(self.replay_buffer) < self.batch_size:\
+            \cf3 return\cf4 \
+        \
+        \cf5 # Sample a batch of transitions\cf4 \
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)\
+        states = torch.FloatTensor(states).to(self.device)\
+        actions = torch.FloatTensor(actions).to(self.device)\
+        rewards = torch.FloatTensor(rewards).unsqueeze(\cf7 1\cf4 ).to(self.device)\
+        next_states = torch.FloatTensor(next_states).to(self.device)\
+        dones = torch.FloatTensor(dones).unsqueeze(\cf7 1\cf4 ).to(self.device)\
+        \
+        \cf5 # Critic update\cf4 \
+        \cf3 with\cf4  torch.no_grad():\
+            next_actions = self.actor_target(next_states)\
+            target_q = self.critic_target(next_states, next_actions)\
+            target_q = rewards + (\cf7 1\cf4  - dones) * self.gamma * target_q\
+        current_q = self.critic(states, actions)\
+        critic_loss = F.mse_loss(current_q, target_q)\
+        \
+        self.critic_optimizer.zero_grad()\
+        critic_loss.backward()\
+        self.critic_optimizer.step()\
+        \
+        \cf5 # Actor update\cf4 \
+        actor_loss = -self.critic(states, self.actor(states)).mean()\
+        self.actor_optimizer.zero_grad()\
+        actor_loss.backward()\
+        self.actor_optimizer.step()\
+        \
+        \cf5 # Soft update of target networks\cf4 \
+        \cf3 for\cf4  target_param, param \cf3 in\cf4  zip(self.actor_target.parameters(), self.actor.parameters()):\
+            target_param.data.copy_(target_param.data * (\cf7 1.0\cf4  - self.tau) + param.data * self.tau)\
+        \
+        \cf3 for\cf4  target_param, param \cf3 in\cf4  zip(self.critic_target.parameters(), self.critic.parameters()):\
+            target_param.data.copy_(target_param.data * (\cf7 1.0\cf4  - self.tau) + param.data * self.tau)\
+\
+\cf5 ###############################\cf4 \
+\cf5 # Main Training Loop\cf4 \
+\cf5 ###############################\cf4 \
+\
+\cf3 def\cf4  main():\
+    \cf5 # Set random seeds for reproducibility\cf4 \
+    np.random.seed(\cf7 42\cf4 )\
+    torch.manual_seed(\cf7 42\cf4 )\
+    random.seed(\cf7 42\cf4 )\
+    \
+    env = MullerBrownEnv()\
+    state_dim = \cf7 10\cf4   \cf5 # 5 potentials + 5 temperatures\cf4 \
+    action_dim = \cf7 3\cf4   \cf5 # sigma_x, sigma_y, and raw rho\cf4 \
+    agent = DDPGAgent(state_dim, action_dim, device=\cf6 'cpu'\cf4 )\
+    \
+    num_episodes = \cf7 100\cf4 \
+    max_steps = env.max_steps\
+    \
+    \cf3 for\cf4  episode \cf3 in\cf4  range(num_episodes):\
+        state = env.reset()\
+        episode_reward = \cf7 0.0\cf4 \
+        \cf3 for\cf4  step \cf3 in\cf4  range(max_steps):\
+            action = agent.select_action(state, noise_std=\cf7 0.1\cf4 )\
+            next_state, reward, done = env.step(action)\
+            \
+            \cf5 # Store the transition in the replay buffer.\cf4 \
+            agent.replay_buffer.push(state, action, reward, next_state, done)\
+            state = next_state\
+            episode_reward += reward\
+            \
+            \cf5 # Update agent\cf4 \
+            agent.update()\
+            \
+            \cf3 if\cf4  done:\
+                \cf3 break\cf4 \
+                \
+        print(\cf6 f"Episode \cf8 \{episode+\cf7 1\cf8 :03d\}\cf6 , Reward: \cf8 \{episode_reward:\cf7 .3\cf8 f\}\cf6 "\cf4 )\
+        \
+\cf3 if\cf4  __name__ == \cf6 "__main__"\cf4 :\
+    main()
+\f2\fs24 \cf0 \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f2\fs24 \cf0 \
+\uc0\u11835 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f0\fs28 \cf2 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\sl324\slmult1\pardirnatural\partightenfactor0
+
+\f4\b\fs30 \cf2 Code Overview
+\f0\b0\fs28 \
+\pard\tqr\tx260\tx420\li420\fi-420\sl324\slmult1\sb240\partightenfactor0
+
+\f5 \cf2 	1.	
+\f6\b Potential Functions:
+\f0\b0 \
+The 
+\f1 muller_brown
+\f0  function computes the original potential; 
+\f1 gaussian_bias
+\f0  computes a 2D Gaussian that is deposited at each visited point. The 
+\f1 total_potential
+\f0  function sums the original potential and all deposited biases.\
+
+\f5 	2.	
+\f6\b Environment Class:
+\f0\b0 \
+The 
+\f1 MullerBrownEnv
+\f0  class simulates the system via Langevin dynamics. In each step, the RL action is used to deposit a new Gaussian bias at the current position. The new state is defined as a 10-dimensional vector including the potential (and temperature) at the current and four neighboring points. The reward is computed as the spread (variance) of the visited positions to encourage exploration.\
+
+\f5 	3.	
+\f6\b DDPG Agent:
+\f0\b0 \
+The agent consists of an actor (mapping from state to 3-dimensional action) and a critic (evaluating Q-values) along with target networks. The agent uses a replay buffer and soft updates to learn.\
+
+\f5 	4.	
+\f6\b Training Loop:
+\f0\b0 \
+The main loop resets the environment for each episode, collects transitions, and performs learning updates.\
+\
+This example should give you a robust starting point to further tailor your simulation, reward functions, and network architectures as needed for your RL-accelerated FES exploration project.}

@@ -1,7 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from collections import deque
-import copy
 from abc import ABC, abstractmethod
 
 ###############################
@@ -123,7 +121,7 @@ class GaussianBias:
 # Generalized ABC Implementation
 ###############################
 
-class GeneralizedABC:
+class LangevinABC:
     def __init__(self, potential, dt=0.01, gamma=1.0, T=0.1, 
                  bias_height=10.0, bias_sigma=0.3, 
                  deposition_frequency=100, basin_threshold=0.1,
@@ -224,11 +222,11 @@ class GeneralizedABC:
             if np.linalg.norm(force) > self.force_threshold:
                 return False
                 
-        # Distance condition
-        if self.last_bias_position is not None:
-            distance = np.linalg.norm(self.position - self.last_bias_position)
-            if distance < self.basin_threshold:
-                return False
+        # # Distance condition
+        # if self.last_bias_position is not None:
+        #     distance = np.linalg.norm(self.position - self.last_bias_position)
+        #     if distance < self.basin_threshold:
+        #         return False
                 
         return True
         
@@ -559,7 +557,7 @@ def run_1d_simulation():
     print("=" * 50)
     
     potential = DoubleWellPotential1D()
-    abc = GeneralizedABC(
+    abc = LangevinABC(
         potential=potential,
         dt=0.001,
         gamma=1.0,
@@ -581,7 +579,7 @@ def run_1d_simulation():
     print(f"Final position: {abc.position}")
     
     analyze_basin_visits(abc)
-    plot_results(abc, save_plots=True, filename="1d_abc")
+    plot_results(abc, save_plots=True, filename="1d_lang_abc.png")
 
 def run_2d_simulation():
     """Run 2D ABC simulation with Muller-Brown potential."""
@@ -590,7 +588,7 @@ def run_2d_simulation():
     print("=" * 50)
     
     potential = MullerBrownPotential2D()
-    abc = GeneralizedABC(
+    abc = LangevinABC(
         potential=potential,
         dt=0.001,
         gamma=1.0,
@@ -611,7 +609,7 @@ def run_2d_simulation():
     print(f"Final position: {abc.position}")
     
     analyze_basin_visits(abc)
-    plot_results(abc, save_plots=True, filename="2d_abc")
+    plot_results(abc, save_plots=True, filename="2d_lang_abc.png")
 
 def run_2d_simulation_with_force_threshold():
     """Run 2D ABC simulation with Muller-Brown potential."""
@@ -620,7 +618,7 @@ def run_2d_simulation_with_force_threshold():
     print("=" * 50)
     
     potential = MullerBrownPotential2D()
-    abc = GeneralizedABC(
+    abc = LangevinABC(
         potential=potential,
         dt=0.001,
         gamma=1.0,
@@ -642,7 +640,7 @@ def run_2d_simulation_with_force_threshold():
     print(f"Final position: {abc.position}")
     
     analyze_basin_visits(abc)
-    plot_results(abc, save_plots=True, filename="2d_abc_force_thresh")
+    plot_results(abc, save_plots=True, filename="2d_lang_abc_force_thresh.png")
 
 def main():
     """Run both 1D and 2D simulations."""

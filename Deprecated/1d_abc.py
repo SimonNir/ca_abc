@@ -7,28 +7,30 @@ import copy
 # Potential Functions (1D)
 ###############################
 
-def double_well(x):
+def potential(x):
     """Compute double well potential with minima at x=-1 and x=1."""
     return 1/6 * (5 * (x**2 - 1))**2
 
-def gaussian_bias_1d(x, center, sigma, height):
+# eventually, this will be a class of objects that can be stored
+def gaussian_bias(x, center, sigma, height):
     """Compute 1D Gaussian bias potential."""
     dx = x - center
     exponent = -dx**2 / (2 * sigma**2)
     exponent = np.clip(exponent, -100, 100)
     return height * np.exp(exponent)
 
-def compute_force_1d(x, bias_list, eps=1e-5):
-    """Compute negative gradient of total potential (force) in 1D."""
-    def total_potential(pos_x):
-        V = double_well(pos_x)
+def total_potential(pos_x, bias_list):
+        V = potential(pos_x)
         for center, sigma, height in bias_list:
-            V += gaussian_bias_1d(pos_x, center, sigma, height)
+            V += gaussian_bias(pos_x, center, sigma, height)
         return V
+
+def compute_force(x, bias_list, eps=1e-5):
+    """Compute negative gradient of total potential (force) in 1D."""
     
     # Numerical gradient
-    V_x_plus = total_potential(x + eps)
-    V_x_minus = total_potential(x - eps)
+    V_x_plus = total_potential(x + eps, bias_list)
+    V_x_minus = total_potential(x - eps, bias_list)
     
     dV_dx = (V_x_plus - V_x_minus) / (2 * eps)
     force = -dV_dx
@@ -40,7 +42,8 @@ def compute_force_1d(x, bias_list, eps=1e-5):
 
 class StandardABC1D:
     def __init__(self, dt=0.01, gamma=1.0, T=0.1, bias_height=10.0, 
-                 bias_sigma=0.3, deposition_frequency=100, basin_threshold=0.1):
+                 bias_sigma=0.3, deposition_frequency=10, basin_threshold=0.1, 
+                 starting_position=0, force_threshold=None):
         """
         1D Standard ABC implementation.
         
@@ -68,25 +71,25 @@ class StandardABC1D:
         self.bias_sigma = bias_sigma
         self.deposition_frequency = deposition_frequency
         self.basin_threshold = basin_threshold
-        
-        # Noise parameters for Langevin dynamics
-        self.noise_std = np.sqrt(2 * T * dt / gamma)
+        self.force_threshold = force_threshold
         
         # State variables
-        self.position = np.array(0.0)  # Start at origin
+        self.starting_position = np.array([starting_position], dtype=float)
+        self.position = self.starting_position
         self.bias_list = []  # List of (center, sigma, height) tuples
         self.trajectory = []
         self.step_count = 0
         self.last_bias_position = None
+        self.forces = []
         
     def reset(self, start_pos=None):
         """Reset the simulation."""
         if start_pos is None:
-            self.position = np.array(0.0)
+            self.position = self.starting_position
         else:
-            self.position = np.array(start_pos)
+            self.position = np.array([start_pos], dtype=float)
         self.bias_list = []
-        self.trajectory = [self.position.copy()]
+        self.trajectory = [self.position]
         self.step_count = 0
         self.last_bias_position = None
         
@@ -96,32 +99,44 @@ class StandardABC1D:
         Standard ABC deposits bias periodically and when particle 
         has moved sufficiently from last bias position.
         """
-        # Check frequency condition
+        # Frequency condition
         if self.step_count % self.deposition_frequency != 0:
             return False
-            
-        # Check if we've moved sufficiently from last bias
+        
+        # Force condition 
+        if self.force_threshold is not None: 
+            forces = compute_force(self.position, self.bias_list)
+            if np.linalg.norm(forces) > self.force_threshold:
+                return False  # Still climbing
+        
+        # Distance condition
         if self.last_bias_position is not None:
-            distance = np.abs(self.position - self.last_bias_position)
+            distance = np.linalg.norm(self.position - self.last_bias_position)
             if distance < self.basin_threshold:
-                return False
-                
+                return False  # Not far enough
+            
         return True
+            
         
     def deposit_bias(self):
         """Deposit a Gaussian bias at current position."""
         center = self.position.copy()
         self.bias_list.append((center, self.bias_sigma, self.bias_height))
-        self.last_bias_position = center.copy()
-        print(f"Step {self.step_count}: Deposited bias at {center:.3f}")
+        self.last_bias_position = center
+        print(f"Step {self.step_count}: Deposited bias at {center}")
+        
+    def calculate_noise(self):
+        # Noise parameters for Langevin dynamics
+        noise_std = np.sqrt(2 * self.T * self.dt / self.gamma)
+        return np.random.normal(0, noise_std, size=1)
         
     def langevin_step(self):
         """Perform one step of Langevin dynamics."""
         # Compute force from potential + biases
-        force = compute_force_1d(self.position, self.bias_list)
-        
+        force = compute_force(self.position, self.bias_list)
+
         # Add thermal noise
-        noise = np.random.normal(0, self.noise_std)
+        noise = self.calculate_noise()
         
         # Update position using Langevin equation
         self.position += (force / self.gamma) * self.dt + noise
@@ -146,23 +161,22 @@ class StandardABC1D:
             # Check if we should deposit a bias
             if self.should_deposit_bias():
                 self.deposit_bias()
-                
             # Perform Langevin dynamics step
             self.langevin_step()
             
             # Record trajectory
             self.trajectory.append(self.position.copy())
-            
+
             # Print progress
             if verbose and step % 1000 == 0:
-                print(f"Step {step}: Position {self.position:.3f}, "
+                print(f"Step {step}: Position {self.position}, "
                       f"Biases deposited: {len(self.bias_list)}")
                       
         print(f"Simulation completed. Total biases deposited: {len(self.bias_list)}")
         
     def get_trajectory(self):
         """Return the trajectory as a numpy array."""
-        return np.array(self.trajectory)
+        return np.array(self.trajectory).reshape(-1,1)
         
     def get_bias_centers(self):
         """Return the centers of all deposited biases."""
@@ -183,70 +197,73 @@ class StandardABC1D:
         """
         x = np.linspace(x_range[0], x_range[1], resolution)
         
-        F = np.zeros_like(x)
-        for i in range(resolution):
-            V = double_well(x[i])
-            for center, sigma, height in self.bias_list:
-                V += gaussian_bias_1d(x[i], center, sigma, height)
-            F[i] = V
-                
+        F = np.array([total_potential(pos, self.bias_list) for pos in x])
         return x, F
 
 ###############################
 # Analysis and Visualization (1D)
 ###############################
 
-def plot_results_1d(abc_sim, save_plots=False):
-    """Plot the results of 1D ABC simulation."""
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
-    
+def plot_results(abc_sim, save_plots=False):
+    """Plot the results of 1D ABC simulation with energy profile added."""
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
+
     # Plot 1: Original and biased potential
     x, F_orig = abc_sim.compute_free_energy_surface()
-    ax1.plot(x, double_well(x), 'k-', label='Original Potential')
+    ax1.plot(x, potential(x), 'k-', label='Original Potential')
     
     # Plot biased potential
     x_bias, F_bias = abc_sim.compute_free_energy_surface()
     ax1.plot(x_bias, F_bias, 'b-', alpha=0.7, label='Biased Potential')
-    
+
     # Mark bias centers
     bias_centers = abc_sim.get_bias_centers()
     if len(bias_centers) > 0:
         for center in bias_centers:
             ax1.axvline(center, color='r', linestyle='--', alpha=0.5)
-    
+
     ax1.set_title('Potential Energy Landscape')
     ax1.set_xlabel('x')
     ax1.set_ylabel('Energy')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
-    
+
     # Plot 2: Trajectory
     trajectory = abc_sim.get_trajectory()
     times = np.arange(len(trajectory))
     ax2.plot(times, trajectory, 'g-', alpha=0.7, linewidth=1)
-    ax2.axhline(-1, color='k', linestyle=':', alpha=0.3)  # Mark minima
+    ax2.axhline(-1, color='k', linestyle=':', alpha=0.3)  # Example minima
     ax2.axhline(1, color='k', linestyle=':', alpha=0.3)
-    
+
     ax2.set_title('ABC Trajectory')
     ax2.set_xlabel('Time Step')
     ax2.set_ylabel('Position')
     ax2.grid(True, alpha=0.3)
-    
+
     # Plot 3: Histogram of visited positions
     ax3.hist(trajectory, bins=50, density=True, color='purple', alpha=0.7)
     ax3.set_title('Visited Positions Distribution')
     ax3.set_xlabel('Position')
     ax3.set_ylabel('Frequency')
     ax3.grid(True, alpha=0.3)
-    
+    ax3.set_xlim(-2, 2)
+
+    # Plot 4: Energy profile over time
+    energy_profile = np.array([total_potential(xi, abc_sim.bias_list) for xi in trajectory])
+    ax4.plot(times, energy_profile, 'orange', linewidth=1)
+    ax4.set_title('Energy Profile Over Time')
+    ax4.set_xlabel('Time Step')
+    ax4.set_ylabel('Potential Energy')
+    ax4.grid(True, alpha=0.3)
+
     plt.tight_layout()
-    
+
     if save_plots:
-        plt.savefig('abc_1d_results.png', dpi=300, bbox_inches='tight')
-    
+        plt.savefig('1d_abc_results_force_thresh.png', dpi=300, bbox_inches='tight')
+
     plt.show()
 
-def analyze_basin_visits_1d(trajectory, basin_centers=None, basin_radius=0.3):
+def analyze_basin_visits(trajectory, basin_centers=None, basin_radius=0.3):
     """
     Analyze which basins were visited during the simulation (1D version).
     
@@ -299,7 +316,7 @@ def analyze_basin_visits_1d(trajectory, basin_centers=None, basin_radius=0.3):
 # Main Execution
 ###############################
 
-def main_1d():
+def main():
     """Run 1D ABC simulation and analysis."""
     # Set random seed for reproducibility
     np.random.seed(42)
@@ -315,26 +332,28 @@ def main_1d():
         bias_height=.2,
         bias_sigma=0.1,
         deposition_frequency=100,
-        basin_threshold=0.1
+        basin_threshold=0.1,
+        force_threshold=10,
+        starting_position=-1
     )
     
     # Run simulation
-    abc.run_simulation(max_steps=10000, verbose=True)
+    abc.run_simulation(max_steps=20000, verbose=True)
     
     # Analyze results
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")
     print(f"Total steps: {len(trajectory)}")
     print(f"Biases deposited: {len(abc.bias_list)}")
-    print(f"Final position: {abc.position:.3f}")
+    print(f"Final position: {abc.position}")
     
     # Analyze basin exploration
-    analyze_basin_visits_1d(trajectory)
+    analyze_basin_visits(trajectory)
     
     # Plot results
-    plot_results_1d(abc, save_plots=True)
+    plot_results(abc, save_plots=True)
     
     return abc
 
 if __name__ == "__main__":
-    abc_simulation_1d = main_1d()
+    abc_simulation = main()

@@ -90,15 +90,13 @@ class StandardABC:
         self.basin_threshold = basin_threshold
         self.force_threshold = force_threshold
         
-        # Noise parameters for Langevin dynamics
-        self.noise_std = np.sqrt(2 * T * dt / gamma)
-        
         # State variables
         self.position = np.array(starting_position, dtype=np.float64)
         self.bias_list = []  # List of (center, sigma, height) tuples
         self.trajectory = [self.position.copy()]
         self.step_count = 0
         self.last_bias_position = None
+
         
     def reset(self, start_pos=None):
         """Reset the simulation."""
@@ -112,6 +110,10 @@ class StandardABC:
         self.last_bias_position = None
         
     def should_deposit_bias(self):
+        # Frequency condition
+        if self.step_count % self.deposition_frequency != 0:
+            return False
+        
         forces = compute_force(self.position[0], self.position[1], self.bias_list)
         if np.linalg.norm(forces) > self.force_threshold:
             return False  # Still climbing
@@ -128,13 +130,18 @@ class StandardABC:
         self.last_bias_position = center.copy()
         print(f"Step {self.step_count}: Deposited bias at ({center[0]:.3f}, {center[1]:.3f})")
         
+    def calculate_noise(self):
+        # Noise parameters for Langevin dynamics
+        noise_std = np.sqrt(2 * self.T * self.dt / self.gamma)
+        return np.random.normal(0, noise_std, size=2)
+        
     def langevin_step(self):
         """Perform one step of Langevin dynamics."""
         # Compute force from potential + biases
         force = compute_force(self.position[0], self.position[1], self.bias_list)
-                
+        
         # Add thermal noise
-        noise = np.random.normal(0, self.noise_std, size=2)
+        noise = self.calculate_noise()
         
         # Update position using Langevin equation
         self.position += (force / self.gamma) * self.dt + noise
@@ -399,14 +406,14 @@ def main():
         T=0.1,
         bias_height=10.0,
         bias_sigma=0.3,
-        deposition_frequency=100,
+        deposition_frequency=1,
         basin_threshold=0.1, 
         starting_position=(0,0),
         force_threshold=100
     )
     
     # Run simulation
-    abc.run_simulation(max_steps=20000, verbose=True)
+    abc.run_simulation(max_steps=10000, verbose=True)
     
     # Analyze results
     trajectory = abc.get_trajectory()

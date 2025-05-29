@@ -109,6 +109,8 @@ class TraditionalABC:
         self.energies = []  # Biased energies at each trajectory point
         self.minima = []
         self._dimension = len(self.position)
+        self.total_force_calls = 0
+        self.iter_periods = []
         
     @property
     def dimension(self):
@@ -128,16 +130,18 @@ class TraditionalABC:
             pos_plus[i] += eps
             pos_minus[i] -= eps
             force[i] = -(self.total_potential(pos_plus) - self.total_potential(pos_minus)) / (2 * eps)
+        self.total_force_calls += 1
         return np.clip(force, -100, 100)
         
-    def deposit_bias(self):
+    def deposit_bias(self, center=None):
+        pos=center if center is not None else self.position.copy()
         bias = GaussianBias(
-            center=self.position.copy(),
+            center=pos,
             covariance=np.square(self.bias_sigma),
             height=self.bias_height
         )
         self.bias_list.append(bias)
-        print(f"Deposited bias at {self.position}")
+        print(f"Deposited bias at {pos}")
         
     def descend(self, max_steps, convergence_threshold=1e-5):
         # Record initial state before descent
@@ -154,7 +158,7 @@ class TraditionalABC:
             self.total_potential,
             self.position,
             method=self.optimizer,
-            jac=lambda x: -self.compute_force(x),
+            jac=lambda x: -self.compute_force(x)/3,
             tol=convergence_threshold,
             options={'maxiter': max_steps, 'disp': False},
             callback=callback
@@ -183,7 +187,11 @@ class TraditionalABC:
         # self.forces.append(self.compute_force(self.position))
         # self.energies.append(self.total_potential(self.position))
         print(f"Randomly perturbed to {self.position}")
-        
+    
+    def store_iter_period(self):
+        period = len(self.trajectory) - np.sum(self.iter_periods)
+        self.iter_periods.append(period)
+
     def run_simulation(
         self,
         max_iterations=30,
@@ -203,6 +211,8 @@ class TraditionalABC:
             if converged:
                 self.perturb(perturb_scale)
             
+            self.store_iter_period()
+
             if verbose:
                 print(f"Iteration {iteration+1}/{max_iterations}: "
                       f"Position {self.position}, "

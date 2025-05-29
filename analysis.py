@@ -45,7 +45,7 @@ def _plot_1d_results(abc_sim, save_plots, filename="1d_results.png"):
     
     # Mark known basins if available
     if hasattr(abc_sim.potential, 'known_basins'):
-        for basin in abc_sim.potential.known_basins():
+        for basin in abc_sim.potential.known_minima():
             ax2.axhline(basin[0], color='k', linestyle=':', alpha=0.3)
     
     ax2.set_title('ABC Trajectory')
@@ -134,7 +134,7 @@ def _plot_2d_results(abc_sim, save_plots, filename="2d_results.png"):
     # Plot 3: Trajectory
     trajectory = abc_sim.get_trajectory()
     if len(trajectory) > 1:
-        points = np.array(trajectory).reshape(-1, 1, 2)
+        points = np.array(trajectory)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         
         # Time-based colormap
@@ -203,12 +203,12 @@ def analyze_basin_visits(abc_sim, basin_radius=0.3, verbose=True):
     """
     trajectory = abc_sim.get_trajectory()
     
-    if not hasattr(abc_sim.potential, 'known_basins'):
+    if not hasattr(abc_sim.potential, 'known_minima'):
         if verbose:
             print("No known basins defined for this potential")
         return {}
         
-    known_basins = [np.atleast_1d(b) for b in abc_sim.potential.known_basins()]
+    known_basins = [np.atleast_1d(b) for b in abc_sim.potential.known_minima()]
     basin_visits = {i: [] for i in range(len(known_basins))}
     current_basin = None
 

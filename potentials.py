@@ -24,9 +24,15 @@ class PotentialEnergySurface(ABC):
         pass
         
     @abstractmethod
-    def known_basins(self):
+    def known_minima(self):
         """Return known basins (for analysis)."""
         pass
+
+    @abstractmethod
+    def known_saddles(self):
+        """Return known saddles (for analysis)."""
+        pass
+
 
 ###############################
 # Concrete Potential Implementations
@@ -45,8 +51,48 @@ class DoubleWellPotential1D(PotentialEnergySurface):
     def plot_range(self):
         return (-2, 2)
         
-    def known_basins(self):
+    def known_minima(self):
         return [np.array([-1.0], dtype=float), np.array([1.0], dtype=float)]
+    
+    def known_saddles(self):
+        return [np.array([0.0], dtype=float)]
+
+class ComplexPotential1D(PotentialEnergySurface):
+    
+    def potential(self, x):
+        a=[6.5, 4.2, -7.3, -125]
+        b=[2.5, 4.3, 1.5, 0.036]
+        c=[9.7, 1.9, -2.5, 12]
+        V = x**2
+        for i in range(4):
+            exponent = -b[i]*(x-c[i])**2
+            exponent = np.clip(exponent, -100, 100)
+            V += a[i]*np.exp(exponent)
+        return V
+    
+    def default_starting_position(self):
+        return np.array([0.0], dtype=float)
+        
+    def plot_range(self):
+        return (-3.5, 11.6)
+        
+    def known_minima(self):
+        return [
+                np.array([-2.27151]), 
+                np.array([0.41295]), 
+                np.array([2.71638]), 
+                np.array([8.69999]), 
+                np.array([10.35518]) 
+                ]
+    
+    def known_saddles(self):
+        return [
+                np.array([-1.2645]),
+                np.array([1.94219]), 
+                np.array([4.55508]),
+                np.array([9.7913])
+                ]
+
 
 class MullerBrownPotential2D(PotentialEnergySurface):
     """2D Muller-Brown potential."""
@@ -74,12 +120,34 @@ class MullerBrownPotential2D(PotentialEnergySurface):
     def plot_range(self):
         return ((-2, 2), (-1, 2))
         
-    def known_basins(self):
+    def known_minima(self):
         return [
-            np.array([-0.558, 1.442]),  # Basin A
-            np.array([0.623, 0.028]),   # Basin B  
-            np.array([-0.050, 0.467])   # Basin C
+            np.array([-0.5582236346, 1.441725842]),  # Basin A
+            np.array([0.6234994049, 0.02803775853]),   # Basin B  
+            np.array([-0.050010823, 0.4666941049])   # Basin C
+        ]
+    
+    def known_saddles(self):
+        return [
+            np.array([0.212486582, 0.2929883251]), # Transition A<-->B
+            np.array([-0.8220015587, 0.6243128028])  # Transition B<-->C
         ]
     
 # class RandomizedMullerBrown2D(PotentialEnergySurface):
+#     """Randomized 2D Muller Brown-style potentials"""
 
+#     def potential(self,pos):
+#         x, y = pos[0], pos[1]
+#         A = np.array([-200, -100, -170, 15])
+#         a = np.array([-1, -1, -6.5, 0.7])
+#         b = np.array([0, 0, 11, 0.6])
+#         c = np.array([-10, -10, -6.5, 0.7])
+#         x0 = np.array([1, 0, -0.5, -1])
+#         y0 = np.array([0, 0.5, 1.5, 1])
+
+#         V = 0.0
+#         for i in range(4):
+#             exponent = a[i]*(x - x0[i])**2 + b[i]*(x - x0[i])*(y - y0[i]) + c[i]*(y - y0[i])**2
+#             exponent = np.clip(exponent, -100, 100)
+#             V += A[i] * np.exp(exponent)
+#         return V

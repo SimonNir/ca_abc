@@ -273,7 +273,7 @@ def run_1d_simulation():
 
 def run_2d_simulation():
     """Run 2D ABC simulation with Muller-Brown potential."""
-    np.random.seed(42)
+    np.random.seed(420)
     print("Starting 2D ABC Simulation")
     print("=" * 50)
     
@@ -286,7 +286,7 @@ def run_2d_simulation():
         starting_position=[0, 0]
     )
     
-    abc.run_simulation(max_iterations=15, perturb_scale=0.01, verbose=True)
+    abc.run_simulation(max_iterations=8, perturb_scale=1, verbose=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")

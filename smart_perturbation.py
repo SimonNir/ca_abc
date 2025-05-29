@@ -29,8 +29,7 @@ class SmartPerturbABC(TraditionalABC):
         return -hessian  # negative because we're working with -∇V
 
 
-    def perturb_along_softest_mode(self, scale):
-        hessian = self.compute_hessian_finite_difference(self.position)
+    def perturb_along_softest_mode(self, scale, hessian):
         eigvals, eigvecs = np.linalg.eigh(hessian)
 
         # Pick direction of lowest curvature (softest mode)
@@ -43,8 +42,33 @@ class SmartPerturbABC(TraditionalABC):
         print(self.position)
         print(f"Perturbed along softest mode to {self.position}")
 
-    def run_simulation(self, max_iterations=30, descent_max_steps=100, descent_threshold=0.00001, perturb_scale=1, verbose=True):
-        return super().run_simulation(max_iterations, descent_max_steps, descent_threshold, perturb_scale, verbose)
+    def run_simulation(
+        self,
+        max_iterations=30,
+        descent_max_steps=100,
+        descent_threshold=1e-5,
+        perturb_scale=1,
+        verbose=True
+    ):
+        for iteration in range(max_iterations):
+            converged = self.descend(
+                max_steps=descent_max_steps,
+                convergence_threshold=descent_threshold
+            )
+
+            hessian_before_new_bias = self.compute_hessian_finite_difference(self.position)
+
+            self.deposit_bias()
+
+            if converged:
+                self.perturb_along_softest_mode(perturb_scale, hessian_before_new_bias)
+            
+            if verbose:
+                print(f"Iteration {iteration+1}/{max_iterations}: "
+                      f"Position {self.position}, "
+                      f"Total biases: {len(self.bias_list)}")
+                      
+        print(f"Simulation completed. Total steps: {len(self.trajectory)}")
 
 from analysis import plot_results, analyze_basin_visits
 
@@ -76,7 +100,7 @@ def run_1d_simulation():
 
 def run_2d_simulation():
     """Run 2D ABC simulation with Muller-Brown potential."""
-    np.random.seed(42)
+    np.random.seed(420)
     print("Starting 2D ABC Simulation")
     print("=" * 50)
     

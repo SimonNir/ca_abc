@@ -169,7 +169,7 @@ def _plot_2d_results(abc_sim, save_plots, filename="2d_results.png"):
     
     # Plot 4: Exploration metrics
     if len(trajectory) > 2:
-        window_size = 2
+        window_size = 3
         variances = []
         times = []
         

@@ -36,12 +36,14 @@ class SmartPerturbABC(TraditionalABC):
         softest_eigvec = eigvecs[:, np.argmin(eigvals)]
 
         softest_direction = softest_eigvec / np.linalg.norm(softest_eigvec)
-        print(self.position)
         # Move slightly in that direction
         self.position += scale * softest_direction
-        print(self.position)
+        self.trajectory.append(self.position.copy())
+        self.forces.append(self.compute_force(self.position))
+        self.energies.append(self.total_potential(self.position))
         print(f"Perturbed along softest mode to {self.position}")
 
+    # Overrides traditional
     def run_simulation(
         self,
         max_iterations=30,
@@ -81,13 +83,13 @@ def run_1d_simulation():
     potential = DoubleWellPotential1D()
     abc = SmartPerturbABC(
         potential=potential,
-        bias_height=2,
+        bias_height=4,
         bias_sigma=0.5,
         basin_radius=0.5,
         starting_position=[-1.2]
     )
     
-    abc.run_simulation(max_iterations=8, verbose=True)
+    abc.run_simulation(max_iterations=2, perturb_scale=0.1, verbose=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")
@@ -113,7 +115,7 @@ def run_2d_simulation():
         starting_position=[0, 0]
     )
     
-    abc.run_simulation(max_iterations=3, verbose=True)
+    abc.run_simulation(max_iterations=3, perturb_scale=1, verbose=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")

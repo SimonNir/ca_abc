@@ -158,7 +158,7 @@ class TraditionalABC:
             self.total_potential,
             self.position,
             method=self.optimizer,
-            jac=lambda x: -self.compute_force(x)/3,
+            jac=lambda x: -self.compute_force(x),
             tol=convergence_threshold,
             options={'maxiter': max_steps, 'disp': False},
             callback=callback

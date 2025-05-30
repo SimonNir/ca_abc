@@ -33,7 +33,7 @@ class SmartPerturbABC(TraditionalABC):
     def compute_exact_softest_hessian_mode(self, position):
         """
         Fully diagonalize the Hessian to find the exact softest mode.
-        Only use for low-dimensional potentials.
+        More efficient than estimator for low-dim potentials, worse for high-dim
         """
         hessian = self.compute_hessian_finite_difference(position)
         eigvals, eigvecs = np.linalg.eigh(hessian)
@@ -179,13 +179,14 @@ def run_2d_simulation():
     potential = MullerBrownPotential2D()
     abc = SmartPerturbABC(
         potential=potential,
-        bias_height=1,
-        bias_sigma=1,
+        bias_height=10,
+        bias_sigma=0.5,
         basin_radius=0.5,
         starting_position=[0, 0],
+        optimizer='L-BFGS-B'
     )
     
-    abc.run_simulation(max_iterations=50, perturb_scale=1, full_hessians=True, verbose=True)
+    abc.run_simulation(max_iterations=100, perturb_scale=0.1, full_hessians=True, verbose=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")
@@ -198,11 +199,11 @@ def run_2d_simulation():
 
 def main():
     """Run both 1D and 2D simulations."""
-    print("Running 1D Simulation")
-    run_1d_simulation()
+    # print("Running 1D Simulation")
+    # run_1d_simulation()
     
-    # print("\nRunning 2D Simulation")
-    # run_2d_simulation()
+    print("\nRunning 2D Simulation")
+    run_2d_simulation()
 
 if __name__ == "__main__":
     main()

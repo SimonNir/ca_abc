@@ -134,7 +134,7 @@ def _plot_2d_results(abc_sim, save_plots, filename="2d_results.png"):
     # Plot 3: Trajectory
     trajectory = abc_sim.get_trajectory()
     if len(trajectory) > 1:
-        points = np.array(trajectory)
+        points = np.array(trajectory).reshape(-1,1,2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         
         # Time-based colormap

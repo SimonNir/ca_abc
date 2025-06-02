@@ -22,7 +22,7 @@ def _plot_1d_results(abc_sim, save_plots, filename="1d_results.png"):
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
     
     # Plot 1: Original and biased potential
-    x, F_orig = abc_sim.compute_free_energy_surface()
+    x, F_orig = abc_sim.compute_free_energy_surface(resolution=1000)
     ax1.plot(x, abc_sim.potential.potential(x), 'k-', label='Original Potential')
     ax1.plot(x, F_orig, 'b-', alpha=0.7, label='Biased Potential')
     
@@ -242,3 +242,57 @@ def analyze_basin_visits(abc_sim, basin_radius=0.3, verbose=True):
         print(f"\nTotal basin transitions: {total_visits}")
 
     return basin_visits
+
+
+def transition_pathway_stats(abc_sim, iter):
+    """Plot the transition pathway for a given iteration.
+    
+    Args:
+        abc_sim: TraditionalABC instance
+        iter: iteration number to plot
+    """
+    # Get trajectory and energies for this iteration
+    start_idx = np.sum(abc_sim.iter_periods[:iter])
+    end_idx = np.sum(abc_sim.iter_periods[:iter+1])
+    times = np.arange(start_idx, end_idx)
+    traj = abc_sim.trajectory[times]
+    pes = abc_sim.energies[times]
+    
+    # Calculate biased PES
+    biased_pes = pes.copy()
+    for bias in abc_sim.bias_list[:iter]:  # Only use biases up to current iteration
+        biased_pes += bias(traj)
+    
+    # You might want to return the data for external plotting
+    return {
+        'positions': traj,
+        'unbiased_energies': pes,
+        'biased_energies': biased_pes,
+        'times': times
+    }
+
+
+
+    """
+    Let's make a list of all the plots we would want for a general n-d case
+    Let's also consider these for debugging output (e.g. print the full new position vector and the distance)
+
+    1. Biased and unbiased energy as a function of timestep and/or distance from starting point 
+
+    2. Force magnitude and force calls as a function of timestep 
+
+    3. Change in position compared to the prior call and/or the origin as a function of timestep
+
+    4. Curvature (at minima) 
+
+    5. Estimate of barrier height for a given iteration 
+
+    6. In 2d and 1d, labeled plots showing the trajectories as function of step, with the perturbation counting as a step 
+
+    7. Total energy and force calls 
+
+    For all of these it would be nice to see where biases were placed and which steps were perturbations vs BFGS 
+
+    This would allow us to tweak our hyperparameters 
+
+    """

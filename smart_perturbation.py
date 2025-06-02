@@ -30,12 +30,13 @@ class SmartPerturbABC(TraditionalABC):
 
         return -hessian  # negative because we're working with -∇V
     
-    def compute_exact_softest_hessian_mode(self, position):
+    def compute_exact_softest_hessian_mode(self, position, hessian):
         """
         Fully diagonalize the Hessian to find the exact softest mode.
         More efficient than estimator for low-dim potentials, worse for high-dim
         """
-        hessian = self.compute_hessian_finite_difference(position)
+        if hessian is None:
+            hessian = self.compute_hessian_finite_difference(position)
         eigvals, eigvecs = np.linalg.eigh(hessian)
 
         # Pick direction of lowest curvature (softest mode)
@@ -87,12 +88,15 @@ class SmartPerturbABC(TraditionalABC):
             direction = new_direction
 
         return direction, curvature
+    
 
+    def lanczos_estimate_extreme_hessian_modes(self, position, n_min, n_max): 
+        return NotImplementedError
 
     def perturb_along_softest_mode(self, scale, mode):
         softest_direction = mode / np.linalg.norm(mode)
         # Move slightly in that direction
-        self.position += scale * softest_direction
+        self.position += scale * softest_direction 
         self.trajectory.append(self.position.copy())
         self.forces.append(self.compute_force(self.position))
         self.energies.append(self.total_potential(self.position))
@@ -121,7 +125,12 @@ class SmartPerturbABC(TraditionalABC):
             # supports future implementation of curvature-dependent scaling
             if converged:
                 if full_hessians:
-                    mode, _ = self.compute_exact_softest_hessian_mode(self.position)
+                    # testing this out 
+                    hessian = self.compute_hessian_finite_difference(self.position)
+                    for bias in self.bias_list:
+                        hessian -= bias.hessian(self.position)
+
+                    mode, _ = self.compute_exact_softest_hessian_mode(self.position,hessian)
                 else:
                     mode, _ = self.estimate_softest_hessian_mode(self.position)
                 self.perturb_along_softest_mode(perturb_scale, mode)
@@ -141,7 +150,7 @@ class SmartPerturbABC(TraditionalABC):
 #####################################
 
 from analysis import plot_results, analyze_basin_visits
-from potentials import DoubleWellPotential1D, MullerBrownPotential2D, ComplexPotential1D
+from potentials import DoubleWell1D, StandardMullerBrown2D, Complex1D
 
 def run_1d_simulation():
     """Run 1D ABC simulation with double well potential."""
@@ -150,16 +159,16 @@ def run_1d_simulation():
     print("=" * 50)
     
     # potential = DoubleWellPotential1D()
-    potential = ComplexPotential1D()
+    potential = Complex1D()
     abc = SmartPerturbABC(
         potential=potential,
         bias_height=1,
-        bias_sigma=1,
-        basin_radius=0.5,
-        starting_position=[-1.2]
+        bias_sigma=0.3,
+        starting_position=[-1.2],
+        optimizer="CG"
     )
     
-    abc.run_simulation(max_iterations=20, perturb_scale=1, verbose=True)
+    abc.run_simulation(max_iterations=120, perturb_scale=.02, verbose=True, full_hessians=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")
@@ -176,17 +185,16 @@ def run_2d_simulation():
     print("Starting 2D ABC Simulation")
     print("=" * 50)
     
-    potential = MullerBrownPotential2D()
+    potential = StandardMullerBrown2D()
     abc = SmartPerturbABC(
         potential=potential,
-        bias_height=10,
+        bias_height=15,
         bias_sigma=0.5,
-        basin_radius=0.5,
         starting_position=[0, 0],
-        optimizer='L-BFGS-B'
+        optimizer='CG'
     )
     
-    abc.run_simulation(max_iterations=100, perturb_scale=0.1, full_hessians=True, verbose=True)
+    abc.run_simulation(max_iterations=150, perturb_scale=0.05, full_hessians=True, verbose=True)
     
     trajectory = abc.get_trajectory()
     print(f"\nSimulation Summary:")
@@ -199,11 +207,11 @@ def run_2d_simulation():
 
 def main():
     """Run both 1D and 2D simulations."""
-    # print("Running 1D Simulation")
-    # run_1d_simulation()
+    print("Running 1D Simulation")
+    run_1d_simulation()
     
-    print("\nRunning 2D Simulation")
-    run_2d_simulation()
+    # print("\nRunning 2D Simulation")
+    # run_2d_simulation()
 
 if __name__ == "__main__":
     main()

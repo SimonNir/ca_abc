@@ -12,8 +12,12 @@ class PotentialEnergySurface(ABC):
     def potential(self, position):
         """Compute potential energy at given position."""
         pass
-
-    
+        
+    @abstractmethod
+    def default_starting_position(self):
+        """Return default starting position for this PES."""
+        pass
+        
     def gradient(self, position):
         """Compute analytic gradient at given position, if available
         Raise NotImplementedError if not implemented.
@@ -22,26 +26,18 @@ class PotentialEnergySurface(ABC):
         from your implementation, and the ABC will perform finite-difference.
         """
         raise NotImplementedError("Analytic gradient not implemented for this PES.")
-        
-    @abstractmethod
-    def default_starting_position(self):
-        """Return default starting position for this PES."""
-        pass
-        
-    @abstractmethod
+
     def plot_range(self):
         """Return plotting range for visualization."""
-        pass
+        return None
         
-    @abstractmethod
     def known_minima(self):
         """Return known basins (for analysis)."""
-        pass
+        return None 
 
-    @abstractmethod
     def known_saddles(self):
         """Return known saddles (for analysis)."""
-        pass
+        return None
 
 
 ###############################
@@ -168,21 +164,67 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             np.array([-0.8220015587, 0.6243128028])  # Transition B<-->C
         ]
     
-# class RandomizedMullerBrown2D(PotentialEnergySurface):
-#     """Randomized 2D Muller Brown-style potentials"""
 
-#     def potential(self,pos):
-#         x, y = pos[0], pos[1]
-#         A = np.array([-200, -100, -170, 15])
-#         a = np.array([-1, -1, -6.5, 0.7])
-#         b = np.array([0, 0, 11, 0.6])
-#         c = np.array([-10, -10, -6.5, 0.7])
-#         x0 = np.array([1, 0, -0.5, -1])
-#         y0 = np.array([0, 0.5, 1.5, 1])
+# --- Now, a concrete implementation using ASE ---
+from ase import Atoms
+from ase.calculators.lj import LennardJones
 
-#         V = 0.0
-#         for i in range(4):
-#             exponent = a[i]*(x - x0[i])**2 + b[i]*(x - x0[i])*(y - y0[i]) + c[i]*(y - y0[i])**2
-#             exponent = np.clip(exponent, -100, 100)
-#             V += A[i] * np.exp(exponent)
-#         return V
+class ASEPotentialEnergySurface(PotentialEnergySurface):
+    """
+    A base class for PES implementations that use ASE calculators.
+    This helps bridge your abstract PES to ASE's capabilities.
+    """
+    def __init__(self, ase_atoms, calculator):
+        self.atoms = ase_atoms
+        self.atoms.set_calculator(calculator)
+
+    def potential(self, position):
+        """Compute potential energy at given position using ASE."""
+        # Ensure 'position' is a numpy array of correct shape for ASE
+        # For N atoms, it should be (N, 3)
+        self.atoms.set_positions(position.reshape(-1, 3))
+        return self.atoms.get_potential_energy()
+
+    def gradient(self, position):
+        """Compute gradient at given position using ASE."""
+        self.atoms.set_positions(position.reshape(-1, 3))
+        # ASE returns forces, which are negative gradients
+        forces = self.atoms.get_forces()
+        return -forces.flatten() # Flatten to match your 'position' input shape
+
+
+class LennardJonesCluster(ASEPotentialEnergySurface):
+    def __init__(self, num_atoms, initial_positions=None):
+        # Create an ASE Atoms object for LJ atoms
+        # 'X' for generic LJ particles
+        symbols = ['X'] * num_atoms
+        
+        if initial_positions is None:
+            # Random initial positions (example)
+            initial_positions = np.random.rand(num_atoms, 3) * 5.0 
+        
+        atoms = Atoms(symbols=symbols, positions=initial_positions, pbc=False)
+        
+        # Attach the ASE LennardJones calculator
+        lj_calculator = LennardJones(epsilon=1.0, sigma=1.0, rc=2.5) # Example LJ parameters
+        
+        super().__init__(atoms, lj_calculator)
+        self.num_atoms = num_atoms
+
+    def default_starting_position(self):
+        # Implement specific default starting positions for your LJ clusters
+        # e.g., slightly perturbed perfect cluster, or random.
+        # This should return a 1D numpy array of positions.
+        return self.atoms.get_positions().flatten() # Placeholder
+
+    def known_minima(self):
+        # Return a list of known global/local minima for this LJ cluster size
+        # Each minimum should be a flattened numpy array of positions
+        # e.g., for LJ38, you might list its two famous minima.
+        return [] # Placeholder
+
+    def known_saddles(self):
+        # Return a list of known saddle points for this LJ cluster size
+        return [] # Placeholder    
+    
+

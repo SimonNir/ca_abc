@@ -1,0 +1,753 @@
+import numpy as np
+from scipy.optimize import minimize
+
+__author__ = "Simon Nirenberg"
+__email__ = "simon_nirenberg@brown.edu"
+
+class GaussianBias:
+    """
+    N-dimensional Gaussian bias potential:
+    
+    V(x) = -height * exp( -0.5 * (x - center)^T @ cov_inv @ (x - center) )
+    
+    Parameters:
+    -----------
+    center : ndarray, shape (d,)
+        Center of the Gaussian.
+    covariance : ndarray, shape (d, d) or float
+        Covariance matrix of the Gaussian (must be positive definite) or scalar for isotropic Gaussian.
+    height : float
+        Height (amplitude) of the Gaussian bias.
+    """
+    
+    def __init__(self, center, covariance, height):
+        self.center = np.atleast_1d(center)
+        self.height = height
+        
+        # Handle scalar covariance input
+        if np.isscalar(covariance):
+            self.covariance = np.eye(len(center)) * covariance**2
+        else:
+            self.covariance = np.atleast_2d(covariance)
+        
+        # Validate covariance matrix
+        if self.covariance.shape[0] != self.covariance.shape[1]:
+            raise ValueError("Covariance matrix must be square")
+        if self.covariance.shape[0] != self.center.shape[0]:
+            raise ValueError("Covariance matrix dimension must match center dimension")
+        
+        # Compute inverse and determinant for efficient evaluation
+        self._cov_inv = np.linalg.inv(self.covariance)
+        self._det_cov = np.linalg.det(self.covariance)
+        if self._det_cov <= 0:
+            raise ValueError("Covariance matrix must be positive definite")
+    
+    def potential(self, position):
+        """
+        Apply bias potential at given position(s).
+        
+        Parameters:
+        -----------
+        position : ndarray, shape (..., d)
+            Positions at which to apply bias.
+        
+        Returns:
+        --------
+        bias : ndarray, shape (...)
+            Bias potential value(s).
+        """
+        pos = np.atleast_2d(position)
+        delta = pos - self.center
+        exponent = -0.5 * np.einsum('ij,jk,ik->i', delta, self._cov_inv, delta)
+        bias = self.height * np.exp(exponent)
+        return bias if position.ndim > 1 else bias[0]
+    
+    def gradient(self, position):
+        """
+        Compute the gradient of the Gaussian bias potential at given position(s).
+
+        Parameters:
+        -----------
+        position : ndarray, shape (..., d)
+            Positions at which to compute gradient.
+        
+        Returns:
+        --------
+        grad : ndarray, shape (..., d)
+            Gradient(s) of the bias potential.
+        """
+        pos = np.atleast_2d(position)
+        delta = pos - self.center
+        bias = self.potential(pos)[:, np.newaxis]  # shape (N, 1)
+        grad = -bias * np.dot(delta, self._cov_inv.T)  # shape (N, d)
+        return grad if position.ndim > 1 else grad[0]
+    
+    def hessian(self, position):
+        """
+        Compute the Hessian of the Gaussian bias potential at given position(s).
+
+        Parameters:
+        -----------
+        position : ndarray, shape (..., d)
+            Positions at which to compute the Hessian.
+        
+        Returns:
+        --------
+        hess : ndarray, shape (..., d, d)
+            Hessian(s) of the bias potential.
+        """
+        pos = np.atleast_2d(position)  # shape (N, d)
+        delta = pos - self.center      # shape (N, d)
+        bias = self.potential(pos)     # shape (N,)
+        
+        # Precompute inverse covariance
+        cov_inv = self._cov_inv        # shape (d, d)
+
+        hess_list = []
+        for i in range(pos.shape[0]):
+            delta_i = delta[i][:, np.newaxis]  # shape (d, 1)
+            outer = cov_inv @ delta_i @ delta_i.T @ cov_inv  # shape (d, d)
+            hess_i = bias[i] * (outer - cov_inv)             # shape (d, d)
+            hess_list.append(hess_i)
+
+        hess_array = np.stack(hess_list)  # shape (N, d, d)
+        return hess_array if position.ndim > 1 else hess_array[0]
+    
+    def get_cholesky(self):
+        """Return the Cholesky decomposition of covariance matrix."""
+        return np.linalg.cholesky(self.covariance)
+    
+    def __repr__(self):
+        return (f"GaussianBias(center={self.center}, covariance=\n{self.covariance}, height={self.height})")
+    
+
+class SmartABC:
+    """
+    Autonomous Basin Climbing (ABC) algorithm with smart perturbation and biasing strategies.
+    This class has all the functionaly of TraditionalABC and much more. 
+    """
+
+    def __init__(
+        self,
+        potential,
+        expected_barrier_height=1,
+        # Optional parameters organized by category
+        # Setup parameters
+        run_mode="compromise",
+        starting_position=None,
+        
+        # Curvature estimation
+        curvature_method="full_hessian",
+        
+        # Perturbation strategy
+        perturb_type="dynamic",
+        perturb_dist="normal",
+        perturb_scale_set=None,
+        scale_perturb_by_curvature=True,
+        default_perturbation_size=0.05,
+        large_perturbation_scale_factor=5,
+        
+        # Biasing strategy
+        bias_type="smart",
+        default_bias_height=None,
+        default_bias_covariance=None,
+        curvature_bias_height_scale=None,
+        curvature_bias_covariance_scale=None,
+        
+        # Descent and optimization
+        optimizer="L-BFGS-B",
+        descent_convergence_threshold=1e-5,
+        max_descent_steps=20,
+        max_descent_step_size=1.0,
+    ):
+        """
+        Initialize the SmartABC sampler.
+        
+        Args:
+            potential: Potential energy surface to sample
+            expected_barrier_height: Estimated average barrier height (for scaling)
+            
+            See README.md for full documentation of optional parameters.
+        """
+        self.potential = potential
+        self.expected_barrier_height = expected_barrier_height
+        
+        # Set up configuration parameters
+        self.run_mode = run_mode
+        self.curvature_method = curvature_method
+        
+        self.perturb_type = perturb_type
+        self.perturb_dist = perturb_dist
+        self.scale_perturb_by_curvature = scale_perturb_by_curvature
+        self.default_perturbation_size = default_perturbation_size
+        self.large_perturbation_scale_factor = large_perturbation_scale_factor
+        
+        self.bias_type = bias_type
+        self.default_bias_height = default_bias_height or expected_barrier_height
+        self.default_bias_covariance = default_bias_covariance or 1.0
+        self.curvature_bias_height_scale = curvature_bias_height_scale or 1.0
+        self.curvature_bias_covariance_scale = curvature_bias_covariance_scale or 1.0
+        
+        self.optimizer = optimizer
+        self.descent_convergence_threshold = descent_convergence_threshold
+        self.max_descent_steps = max_descent_steps
+        self.max_descent_step_size = max_descent_step_size
+        
+        # Initialize state variables
+        self.reset(starting_position)
+
+    def reset(self, starting_position=None):
+        """Reset the sampler to initial state."""
+        if starting_position is None:
+            self.position = self.potential.default_starting_position()
+        else:
+            self.position = np.array(starting_position, dtype=float)
+            
+        self.bias_list = []
+        self.trajectory = [self.position.copy()]
+        self.energies = []
+        self.forces = []
+        self.minima = []
+        self.saddles = []
+        self._dimension = len(self.position)
+        self.total_force_calls = 0
+        self.iter_periods = []
+        self.prev_mode = None
+        self.most_recent_hessian = None
+        self.most_recent_inv_hessian = None # Only used with curvature_method = "bfgs"
+
+    @property
+    def dimension(self):
+        return self._dimension
+
+    def validate_config(self):
+        """Validate configuration parameters."""
+        # TODO: Implement comprehensive validation
+        pass
+
+    # Core functionality (adapted from TraditionalABC with enhancements)
+    
+    def total_potential(self, position):
+        """Compute total potential including biases."""
+        V = self.potential.potential(position)
+        for bias in self.bias_list:
+            V += bias.potential(position)
+        return V
+
+    def compute_force(self, position, eps=1e-5):
+        """Compute total force using analytical gradients or finite differences."""
+        try:
+            total_grad = self.potential.gradient(position)
+            for bias in self.bias_list:
+                total_grad += bias.gradient(position)
+            force = -total_grad
+        except NotImplementedError:
+            # Fallback to finite difference
+            force = np.zeros_like(position)
+            for i in range(len(position)):
+                pos_plus = position.copy()
+                pos_minus = position.copy()
+                pos_plus[i] += eps
+                pos_minus[i] -= eps
+                force[i] = -(self.total_potential(pos_plus).item() - self.total_potential(pos_minus).item()) / (2 * eps)
+            self.total_force_calls += 1
+
+        return np.clip(force, -100, 100)
+
+    def deposit_bias(self, center=None, covariance=None, height=None):
+        """Deposit a new Gaussian bias potential."""
+        pos = center if center is not None else self.position.copy()
+        
+        # Smart bias scaling based on curvature if available
+        if self.bias_type == "smart" and self.most_recent_hessian is not None:
+            if height is None:
+                height = self.curvature_bias_height_scale * self.expected_barrier_height
+            if covariance is None:
+                # Scale covariance by inverse curvature
+                cov = self.curvature_bias_covariance_scale * np.linalg.inv(
+                    self.make_positive_definite(self.most_recent_hessian)
+                )
+        else:
+            # Fall back to defaults
+            if height is None:
+                height = self.default_bias_height
+            if covariance is None:
+                cov = np.square(self.default_bias_sigma) if hasattr(self, 'default_bias_sigma') else self.default_bias_covariance
+                # backwards compatibility 
+
+        bias = GaussianBias(
+            center=pos,
+            covariance=cov,
+            height=height
+        )
+        self.bias_list.append(bias)
+        print(f"Deposited bias at {pos} with (co)variance {cov} and height {height}.")
+
+    def descend(self, max_steps=None, convergence_threshold=None):
+        """Descend to nearest local minimum using optimization."""
+        max_steps = max_steps or self.max_descent_steps
+        convergence_threshold = convergence_threshold or self.descent_convergence_threshold
+
+        # Record initial state
+        self.forces.append(self.compute_force(self.position))
+        self.energies.append(self.total_potential(self.position))
+        
+        def callback(xk):
+            self.trajectory.append(xk.copy())
+            self.forces.append(self.compute_force(xk))
+            self.energies.append(self.potential.potential(xk))
+            
+        result = minimize(
+            self.total_potential,
+            self.position,
+            method=self.optimizer,
+            jac=lambda x: -self.compute_force(x),
+            tol=convergence_threshold,
+            options={'maxiter': max_steps, 
+                     'disp': False},
+            callback=callback
+        )
+        #TODO: implement max step size - use trust region or your own calculator
+        #TODO: implement your own calculator to cache the callback points so they aren't recomputed 
+
+        new_pos = result.x
+
+        # Record final state
+        if len(self.trajectory) == 0 or not np.allclose(self.trajectory[-1], result.x):
+            self.trajectory.append(result.x.copy())
+            self.forces.append(self.compute_force(result.x))
+            self.energies.append(self.potential.potential(result.x))
+
+        if self.curvature_method=="full_hessians":
+            self.most_recent_hessian == self.compute_hessian_finite_difference(new_pos)
+
+        # Store approximate Hessian if available from optimizer
+        if hasattr(result, 'hess_inv') and self.curvature_method.lower() =="bfgs":
+            if self.optimizer.lower() == "bfgs":
+                self.most_recent_inv_hessian = result.hess_inv
+            # Handle L-BFGS limited memory case
+            elif self.optimizer.lower() == "l-bfgs-b": 
+                self.store_l_bfgs_hess_inv(result.hess_inv)
+            else: 
+                raise ValueError("bfgs curvature_method can only be used with a bfgs-variant optimizer")
+        
+        
+        if result.success:
+            # If converged to near-0 force, check if also near-0 force on original PES 
+            # reconstructing with cheap gradient calls instead of additional MD force calls
+            unbiased_pes_force = self.forces[-1]
+            for bias in self.bias_list:
+                unbiased_pes_force -= (-bias.gradient(new_pos))
+
+            if np.isclose(np.linalg.norm(unbiased_pes_force), 0, convergence_threshold):
+                # final check: if hessian info available, check if the hessian of the original PES indicates a minimum
+                
+                if self.most_recent_hessian is not None: 
+                    unbiased_pes_hessian = self.most_recent_hessian
+                elif self.most_recent_inv_hessian is not None: 
+                    try:
+                        unbiased_pes_hessian = np.linalg.inv(self.most_recent_inv_hessian)
+                    except np.linalg.LinAlgError:
+                        print("Warning: Could not invert inverse Hessian — skipping curvature analysis.")
+                        unbiased_pes_hessian = None
+                    # in most of the code, when working with H_inv, we don't ever invert back, but since this only happens 
+                    # when all the above criteria are fulfilled, it's cheap enough
+                    # We DO NOT set self.most_recent_hessian to this, as that would break other methods that assume that 
+                    # variable is only specified for curvature_method that do not involve H_inv
+                    # The user should never need to worry about any of this, which is why I have not 
+                    # gone to great lengths to reorganize it. 
+
+                if unbiased_pes_hessian is not None: 
+                    for bias in self.bias_list:
+                        unbiased_pes_hessian -= bias.hessian(new_pos)
+
+                    crit_type = self.evaluate_critical_point(new_pos, unbiased_pes_hessian)
+                    if crit_type == "minimum": 
+                        self.minima.append(new_pos.copy())
+                    # If the hessian indicates a saddle point, you got quite lucky - better save it for future reference
+                    elif crit_type == "saddle":
+                        self.saddles.append(new_pos.copy())
+                else: 
+                    self.minima.append(new_pos.copy())
+
+        self.position = new_pos.copy()
+        return result.success
+
+    # Curvature util
+
+    def compute_hessian_finite_difference(self, position, eps=1e-3):
+        n = len(position)
+        hessian = np.zeros((n, n))
+        f0 = self.compute_force(position)  # Cache f(position)
+        
+        # Cache forces at position + eps * e_i for all i
+        f_i_cache = np.zeros((n, n))
+        for i in range(n):
+            delta_i = np.zeros(n)
+            delta_i[i] = eps
+            f_i_cache[i] = self.compute_force(position + delta_i)
+        
+        # Compute upper triangle and diagonal
+        for i in range(n):
+            for j in range(i, n):
+                delta_i = np.zeros(n)
+                delta_j = np.zeros(n)
+                delta_i[i] = eps
+                delta_j[j] = eps
+
+                f_ij = self.compute_force(position + delta_i + delta_j)
+                
+                # Use cached f_i and f_j
+                val = (f_ij[i] - f_i_cache[i][i] - f_i_cache[j][j] + f0[i]) / (eps ** 2)
+                hessian[i, j] = val
+                if i != j:
+                    hessian[j, i] = val  # Exploit symmetry
+
+        return -hessian  # negative because working with -∇V
+
+    
+    def evaluate_critical_point(self, hessian):
+        """Classify critical point based on Hessian eigenvalues."""
+        eigvals = np.linalg.eigvalsh(hessian)
+        if np.all(eigvals > 0):
+            return "minimum"
+        elif np.all(eigvals < 0):
+            return "maximum"
+        else:
+            return "saddle"
+        
+    def conjugate_directions(self, hessian):
+        """
+        Fully diagonalize the Hessian to find all conjugate directions and values.
+        """
+        eigvals, eigvecs = np.linalg.eigh(hessian)
+        return zip(eigvecs.T, eigvals)  # transpose to convert to eigenvector-value pairs 
+    
+    def compute_exact_extreme_hessian_mode(self, hessian, desired_mode = "softest"):
+        """
+        Fully diagonalize the Hessian to find the exact softest mode.
+        More efficient than estimator for low-dim potentials, worse for high-dim
+        """
+        conjugate_dir = list(self.conjugate_directions(hessian))
+        sorted_dirs = sorted(conjugate_dir, key=lambda x: x[1])
+
+        if desired_mode == "softest":
+            return sorted_dirs[0]
+        else:
+            # returns hardest mode and curvature
+            return sorted_dirs[-1]
+
+    
+    def estimate_softest_hessian_mode(self, position, init_direction=None, eps=1e-3, softmode_max_iters=25, tol=1e-4):
+        """
+        Estimate the softest eigenmode (lowest-curvature direction) without full Hessian,
+        using the Rayleigh quotient.
+        
+        Returns:
+            direction: Unit vector along softest mode
+            curvature: Approximate eigenvalue
+        """
+        n = len(position)
+        if init_direction is None:
+            # Start with the previous minimum's softest mode if applicable; otherwise, start with a random unit vector
+            direction = self.prev_mode if self.prev_mode is not None else np.random.randn(n)
+        else:
+            direction = np.array(init_direction)
+        direction /= np.linalg.norm(direction)
+
+        for _ in range(softmode_max_iters):
+            # Finite-difference force approximation (central difference)
+            f1 = self.compute_force(position + eps * direction)
+            f2 = self.compute_force(position - eps * direction)
+
+            # Effective Hessian-vector product: -H @ d ≈ (f1 - f2)/(2ε)
+            h_d = (f1 - f2) / (2 * eps)
+
+            # Rayleigh quotient: curvature ≈ dᵀ H d = -dᵀ h_d
+            curvature = -np.dot(direction, h_d)
+
+            # Gradient of curvature wrt direction is h_d - (dᵀ h_d) d
+            # (i.e., remove component along d to keep normalization)
+            grad = h_d - np.dot(h_d, direction) * direction
+
+            # Gradient descent step to minimize curvature
+            new_direction = direction - 0.1 * grad
+            new_direction /= np.linalg.norm(new_direction)
+
+            if np.linalg.norm(new_direction - direction) < tol:
+                break
+
+            direction = new_direction
+
+        return direction, curvature
+    
+    from scipy.sparse.linalg import LinearOperator
+    def store_l_bfgs_hess_inv(self, hess_inv: LinearOperator): 
+        n = self.dimension
+        I = np.eye(n)
+
+        inv_H = np.column_stack([hess_inv @ I[:, i] for i in range(n)])
+
+        # Symmetrize
+        inv_H = 0.5 * (inv_H + inv_H.T)
+
+        self.most_recent_inv_hessian = inv_H
+    
+    def estimate_extreme_hessian_modes(self, position, n_min, n_max): 
+        """
+        Uses the Lanczos method to estimate the largest and smallest hessian modes.
+        Cheaper than finite-difference but more expensive than Rayleigh. 
+        """
+        return NotImplementedError
+        
+    def get_softest_hessian_mode(self, position):
+        """
+        Gets the softest hessian mode and eigenvalue with maximal efficiency,
+        accounting for the chosen curvature_method 
+        """
+        if self.most_recent_hessian is not None: 
+            # Handles full_hessian since most_recent_hessian is set to 
+            # appropriate hessian immediately when convergence is reached 
+            hessian = self.most_recent_hessian
+            return self.compute_exact_extreme_hessian_mode(hessian, desired_mode="softest")
+        elif self.most_recent_inv_hessian is not None:
+            # Handles bfgs method since softest mode of H is hardest of H_inv
+            inv_hessian = self.most_recent_inv_hessian
+            return self.compute_exact_extreme_hessian_mode(inv_hessian, desired_mode="hardest")
+            
+        elif self.curvature_method.lower() == "lanczos":
+            mode, curvature = self.estimate_extreme_hessian_modes(position, 1, 0) 
+            # TODO: may want to store lanczos to prevent calling again in bias 
+            # deposition - some separate state variable only used with the lanczos 
+            # mode.
+        else:
+            mode, curvature = self.estimate_softest_hessian_mode(position)
+            # TODO: may want to store self.prev_mode here 
+        return (mode, curvature)
+       
+
+    def make_positive_definite(self, H, eps=1e-6):
+        """Modify Hessian to ensure positive definiteness."""
+        eigvals, eigvecs = np.linalg.eigh(H)
+        eigvals_mod = np.clip(eigvals, eps, None)
+        return eigvecs @ np.diag(eigvals_mod) @ eigvecs.T
+
+
+    # Perturbation and climbing
+
+    def perturb(self, scale=None, mode="dynamic"):
+        """
+        Perturb current position using selected strategy.
+        
+        If mode == random or mode == dynamic and criterion fulfilled:
+        random
+        else:
+        if fill_hessian available, compute its softest direction and perturb along it; otherwise, use rayleigh estimate for now 
+        perturb_along_direction()
+        Maybe make a new function to get this info regardless, to handle the hessian info type itself based on type so you dont have to specify 
+
+        """
+        if scale is None:
+            scale = self.default_perturbation_size
+
+        if mode == "random":
+            self.perturb_random(scale)
+        elif mode == "dynamic" and self.suspected_climbing_too_long():
+            self.perturb_random(self.large_perturbation_scale_factor*scale)
+        else:
+            mode, curvature = self.get_softest_hessian_mode(self.position)
+            if self.scale_perturb_by_curvature:
+                mag = scale*mode 
+            else: 
+                mag = scale
+            self.perturb_along_direction(curvature, mag)
+        
+        self._record_perturbation()
+            
+
+    def perturb_along_direction(self, direction, scale):
+        """Perturb along specified direction."""
+        direction = direction / np.linalg.norm(direction)
+        self.position += scale * direction
+        self._record_perturbation(f"Perturbed along direction to {self.position}")
+
+    def perturb_random(self, scale):
+        """Random Gaussian perturbation."""
+        noise = np.random.normal(scale=scale, size=self.position.shape)
+        self.position += noise
+        self._record_perturbation(f"Randomly perturbed to {self.position}")
+
+    def _record_perturbation(self, message=None):
+        """Helper to record perturbation results."""
+        print(message)
+        self.trajectory.append(self.position.copy())
+        self.forces.append(self.compute_force(self.position))
+        self.energies.append(self.total_potential(self.position))
+
+    def suspected_climbing_too_long(self):
+        # TODO: Implement
+        return False 
+
+    # Simulation control
+    
+    def run(self, max_iterations=100, verbose=True, **kwargs):
+        """
+        Run the ABC simulation.
+        
+        Args:
+            max_iterations: Maximum number of iterations
+            verbose: Whether to print progress
+            kwargs: Override any default parameters
+        """
+        # Update parameters from kwargs
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        
+        for iteration in range(max_iterations):
+            # Descent phase
+            converged = self.descend()
+            
+            pos = self.position # position before perturbation
+
+            # Compute Hessian if needed for smart biasing/perturbation
+            if self.curvature_method == "full_hessian":
+                self.most_recent_hessian = self.compute_hessian_finite_difference(self.position)
+                               
+            # Perturbation
+            self.perturb(mode=self.perturb_type)
+
+            # Deposit bias
+            self.deposit_bias(pos)
+            
+            # Record iteration
+            self.store_iter_period()
+            
+            if verbose:
+                print(f"Iteration {iteration+1}/{max_iterations}: "
+                      f"Descent converged: {converged},"
+                      f"Position {self.position}, "
+                      f"Total biases: {len(self.bias_list)}")
+        
+        print(f"Simulation completed. Total steps: {len(self.trajectory)}")
+
+    def store_iter_period(self):
+        """Record number of steps in current iteration."""
+        period = len(self.trajectory) - np.sum(self.iter_periods)
+        self.iter_periods.append(period)
+
+    # Analysis and visualization
+    
+    def get_trajectory(self):
+        return np.array(self.trajectory)
+        
+    def get_forces(self):
+        return np.array(self.forces)
+        
+    def get_energies(self):
+        return np.array(self.energies)
+        
+    def get_bias_centers(self):
+        return np.array([bias.center for bias in self.bias_list])
+        
+    def compute_free_energy_surface(self, resolution=100):
+        """Compute free energy surface on grid for visualization."""
+        if self.dimension == 1:
+            x_range = self.potential.plot_range()
+            x = np.linspace(x_range[0], x_range[1], resolution)
+            F = np.array([self.total_potential(np.array([xi])) for xi in x])
+            return x, F
+        elif self.dimension == 2:
+            x_range, y_range = self.potential.plot_range()
+            x = np.linspace(x_range[0], x_range[1], resolution)
+            y = np.linspace(y_range[0], y_range[1], resolution)
+            X, Y = np.meshgrid(x, y)
+            F = np.zeros_like(X)
+            for i in range(resolution):
+                for j in range(resolution):
+                    pos = np.array([X[i,j], Y[i,j]])
+                    F[i,j] = self.total_potential(pos)
+            return (X, Y), F
+        else:
+            raise NotImplementedError("Visualization not implemented for dimensions > 2")
+        
+
+from potentials import Complex1D, DoubleWell1D, StandardMullerBrown2D
+from analysis import ABCAnalysis
+
+def run_1d_simulation():
+    """Run 1D ABC simulation with complex potential."""
+    np.random.seed(42)
+    print("Starting 1D ABC Simulation")
+    print("=" * 50)
+    
+    potential = Complex1D()
+    abc = SmartABC(
+        potential=potential,
+        starting_position=[0.0],
+        default_bias_height=1,
+        default_bias_covariance=0.4,
+        default_perturbation_size=0.05,
+        optimizer="L-BFGS-B",
+        run_mode="compromise",
+        perturb_type="random",
+        bias_type="constant",
+    )
+    
+    abc.run(max_iterations=10, verbose=True)
+    
+    trajectory = abc.get_trajectory()
+    print(f"\nSimulation Summary:")
+    print(f"Total steps: {len(trajectory)}")
+    print(f"Biases deposited: {len(abc.bias_list)}")
+    print(f"Final position: {abc.position}")
+    
+    # Create analysis and plots
+    analyzer = ABCAnalysis(abc)
+    analyzer.analyze_basin_visits()
+    analyzer.plot_summary(save_plots=True, filename="1d_smart_abc.png")
+    analyzer.plot_diagnostics(save_plots=True, filename="1d_smart_abc_diagnostics.png")
+
+def run_2d_simulation():
+    """Run 2D ABC simulation with Muller-Brown potential."""
+    np.random.seed(420)
+    print("Starting 2D ABC Simulation")
+    print("=" * 50)
+    
+    potential = StandardMullerBrown2D()
+    abc = SmartABC(
+        potential=potential,
+        expected_barrier_height=30,  # Adjusted for Muller-Brown potential
+        starting_position=[0.0, 0.0],
+        optimizer="L-BFGS-B",
+        perturb_type="random",
+        bias_type="constant",
+        default_bias_height=15,
+        default_bias_covariance=0.3,
+        default_perturbation_size=0.05
+    )
+    
+    abc.run(max_iterations=30, verbose=True)
+    
+    trajectory = abc.get_trajectory()
+    print(f"\nSimulation Summary:")
+    print(f"Total steps: {len(trajectory)}")
+    print(f"Biases deposited: {len(abc.bias_list)}")
+    print(f"Final position: {abc.position}")
+    
+    # Create analysis and plots
+    analyzer = ABCAnalysis(abc)
+    analyzer.analyze_basin_visits()
+    analyzer.plot_summary(save_plots=True, filename="2d_smart_abc.png")
+    analyzer.plot_diagnostics(save_plots=True, filename="2d_smart_abc_diagnostics.png")
+
+def main():
+    """Run both 1D and 2D simulations."""
+    print("Running 1D Simulation")
+    run_1d_simulation()
+    
+    print("\nRunning 2D Simulation")
+    run_2d_simulation()
+
+if __name__ == "__main__":
+    main()

@@ -132,15 +132,14 @@ class TraditionalABC:
     def __init__(
         self,
         potential,
-        bias_height=10.0,
-        bias_sigma=0.3, 
-        basin_radius=0.2,
+        default_bias_height=10.0,
+        default_bias_sigma=0.3, 
         optimizer='L-BFGS-B',
         starting_position=None
     ):
         self.potential = potential
-        self.bias_height = bias_height
-        self.bias_sigma = bias_sigma
+        self.default_bias_height = default_bias_height
+        self.default_bias_sigma = default_bias_sigma
         self.optimizer = optimizer
         
         self.reset(starting_position)
@@ -232,15 +231,18 @@ class TraditionalABC:
             return "saddle"
 
         
-    def deposit_bias(self, center=None):
+    def deposit_bias(self, center=None, covariance=None, height=None):
         pos=center if center is not None else self.position.copy()
+        cov = covariance if covariance is not None else np.square(self.default_bias_sigma)
+        h = height if height is not None else self.default_bias_height
+
         bias = GaussianBias(
             center=pos,
-            covariance=np.square(self.bias_sigma),
-            height=self.bias_height
+            covariance=cov, 
+            height=h
         )
         self.bias_list.append(bias)
-        print(f"Deposited bias at {pos}")
+        print(f"Deposited bias at {pos} with (co)variance {cov} and height {h}.")
         
     def descend(self, max_steps, convergence_threshold=1e-5):
         # Record initial state before descent
@@ -381,7 +383,7 @@ class TraditionalABC:
             raise NotImplementedError("Visualization not implemented for dimensions > 2")
 
 
-from analysis import plot_results, analyze_basin_visits
+from analysis_deprecated import plot_results, analyze_basin_visits
 from potentials import DoubleWell1D, StandardMullerBrown2D, Complex1D
 
 def run_1d_simulation():
@@ -393,8 +395,8 @@ def run_1d_simulation():
     potential = Complex1D()
     abc = TraditionalABC(
         potential=potential,
-        bias_height=1,
-        bias_sigma=0.3,
+        default_bias_height=1,
+        default_bias_sigma=0.3,
         starting_position=[-1.2],
         optimizer="CG"
     )
@@ -419,8 +421,8 @@ def run_2d_simulation():
     potential = StandardMullerBrown2D()
     abc = TraditionalABC(
         potential=potential,
-        bias_height=10,
-        bias_sigma=2,
+        default_bias_height=10,
+        default_bias_sigma=2,
         starting_position=[0, 0],
         optimizer="CG"
     )

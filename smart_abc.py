@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
+import os 
 
 __author__ = "Simon Nirenberg"
 __email__ = "simon_nirenberg@brown.edu"
@@ -135,14 +136,15 @@ class SmartABC:
         # Setup parameters
         run_mode="compromise",
         starting_position=None,
-        
+        dump_interval = 3000, # Steps between data dumps
+        dump_folder = "data", 
+
         # Curvature estimation
         curvature_method="full_hessian",
         
         # Perturbation strategy
         perturb_type="dynamic",
         perturb_dist="normal",
-        perturb_scale_set=None,
         scale_perturb_by_curvature=True,
         default_perturbation_size=0.05,
         large_perturbation_scale_factor=5,
@@ -175,6 +177,9 @@ class SmartABC:
         # Set up configuration parameters
         self.run_mode = run_mode
         self.curvature_method = curvature_method
+        self.dump_interval = dump_interval
+        self.dump_folder = dump_folder
+        os.makedirs(self.dump_folder, exist_ok=True)
         
         self.perturb_type = perturb_type
         self.perturb_dist = perturb_dist
@@ -205,8 +210,10 @@ class SmartABC:
             
         self.bias_list = []
         self.trajectory = [self.position.copy()]
-        self.energies = []
-        self.forces = []
+        self.biased_energies = []
+        self.unbiased_energies = []
+        self.biased_forces = []
+        self.unbiased_forces = []
         self.minima = []
         self.saddles = []
         self._dimension = len(self.position)
@@ -295,7 +302,7 @@ class SmartABC:
         def callback(xk):
             self.trajectory.append(xk.copy())
             self.forces.append(self.compute_force(xk))
-            self.energies.append(self.potential.potential(xk))
+            self.energies.append(self.total_potential(xk))
             
         result = minimize(
             self.total_potential,
@@ -316,7 +323,7 @@ class SmartABC:
         if len(self.trajectory) == 0 or not np.allclose(self.trajectory[-1], result.x):
             self.trajectory.append(result.x.copy())
             self.forces.append(self.compute_force(result.x))
-            self.energies.append(self.potential.potential(result.x))
+            self.energies.append(self.total_potential(result.x))
 
         if self.curvature_method=="full_hessians":
             self.most_recent_hessian == self.compute_hessian_finite_difference(new_pos)
@@ -335,13 +342,14 @@ class SmartABC:
         if result.success:
             # If converged to near-0 force, check if also near-0 force on original PES 
             # reconstructing with cheap gradient calls instead of additional MD force calls
-            unbiased_pes_force = self.forces[-1]
+            unbiased_force = self.forces[-1]
             for bias in self.bias_list:
-                unbiased_pes_force -= (-bias.gradient(new_pos))
-
-            if np.isclose(np.linalg.norm(unbiased_pes_force), 0, convergence_threshold):
+                unbiased_force -= (-bias.gradient(new_pos))
+            print(f"Biased: {np.linalg.norm(self.forces[-1])}")
+            print(f"Unbiased: {np.linalg.norm(unbiased_force)}")
+            if np.isclose(np.linalg.norm(unbiased_force), 0, convergence_threshold):
                 # final check: if hessian info available, check if the hessian of the original PES indicates a minimum
-                
+                print("Should be a minimum")
                 if self.most_recent_hessian is not None: 
                     unbiased_pes_hessian = self.most_recent_hessian
                 elif self.most_recent_inv_hessian is not None: 
@@ -579,7 +587,8 @@ class SmartABC:
 
     def _record_perturbation(self, message=None):
         """Helper to record perturbation results."""
-        print(message)
+        if message is not None:
+            print(message)
         self.trajectory.append(self.position.copy())
         self.forces.append(self.compute_force(self.position))
         self.energies.append(self.total_potential(self.position))
@@ -608,7 +617,7 @@ class SmartABC:
             # Descent phase
             converged = self.descend()
             
-            pos = self.position # position before perturbation
+            pos = self.position.copy() # position before perturbation
 
             # Compute Hessian if needed for smart biasing/perturbation
             if self.curvature_method == "full_hessian":
@@ -687,7 +696,7 @@ def run_1d_simulation():
         starting_position=[0.0],
         default_bias_height=1,
         default_bias_covariance=0.4,
-        default_perturbation_size=0.05,
+        default_perturbation_size=0.5,
         optimizer="L-BFGS-B",
         run_mode="compromise",
         perturb_type="random",
@@ -704,7 +713,7 @@ def run_1d_simulation():
     
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
-    analyzer.analyze_basin_visits()
+    print(analyzer.analyze_minima_saddles(proximity_radius=0.1))
     analyzer.plot_summary(save_plots=True, filename="1d_smart_abc.png")
     analyzer.plot_diagnostics(save_plots=True, filename="1d_smart_abc_diagnostics.png")
 
@@ -722,14 +731,17 @@ def run_2d_simulation():
         optimizer="L-BFGS-B",
         perturb_type="random",
         bias_type="constant",
+        curvature_method="ignore",
         default_bias_height=15,
         default_bias_covariance=0.3,
-        default_perturbation_size=0.05
+        default_perturbation_size=0.2,
+        max_descent_steps=100,
     )
     
     abc.run(max_iterations=30, verbose=True)
     
     trajectory = abc.get_trajectory()
+    # print(trajectory)
     print(f"\nSimulation Summary:")
     print(f"Total steps: {len(trajectory)}")
     print(f"Biases deposited: {len(abc.bias_list)}")
@@ -737,14 +749,14 @@ def run_2d_simulation():
     
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
-    analyzer.analyze_basin_visits()
+    print(analyzer.analyze_minima_saddles(proximity_radius=0.1))
     analyzer.plot_summary(save_plots=True, filename="2d_smart_abc.png")
     analyzer.plot_diagnostics(save_plots=True, filename="2d_smart_abc_diagnostics.png")
 
 def main():
     """Run both 1D and 2D simulations."""
     print("Running 1D Simulation")
-    run_1d_simulation()
+    # run_1d_simulation()
     
     print("\nRunning 2D Simulation")
     run_2d_simulation()

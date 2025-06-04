@@ -44,7 +44,7 @@ Setup (passed to `__init__`)
 
 | Parameter         | Description                                                                                     |
 |------------------|-------------------------------------------------------------------------------------------------|
-| `curvature_method` | `"full hessian"` \| `"bfgs"` \| `"lanczos"` \| `"rayleigh"`\| `"ignore"`<br>**Note**: `"bfgs"` requires `optimizer="BFGS"` or `optimizer="L-BFGS-B"`, works best with the former. `"ignore"` runs a traditional ABC |
+| `curvature_method` | `"full_hessian"` \| `"from_opt"` \| `"lanczos"` \| `"rayleigh"`\| `"ignore"`<br>**Note**: `"from_opt"` requires `optimizer="BFGS"`, `"L-BFGS-B"`, or `"trust-region"`; works best with BFGS. `ignore` runs a traditional ABC |
 
 ---
 

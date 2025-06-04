@@ -1,67 +1,10 @@
 import numpy as np
 from scipy.optimize import minimize
-import os 
+from storage import ABCStorage 
+from bias import GaussianBias
 
 __author__ = "Simon Nirenberg"
 __email__ = "simon_nirenberg@brown.edu"
-
-class GaussianBias:
-    """
-    N-dimensional Gaussian bias potential:
-    
-    V(x) = -height * exp( -0.5 * (x - center)^T @ cov_inv @ (x - center) )
-    
-    Parameters:
-    -----------
-    center : ndarray, shape (d,)
-        Center of the Gaussian.
-    covariance : ndarray, shape (d, d) or float
-        Covariance matrix of the Gaussian (must be positive definite) or scalar for isotropic Gaussian.
-    height : float
-        Height (amplitude) of the Gaussian bias.
-    """
-    
-    def __init__(self, center, covariance, height):
-        self.center = np.atleast_1d(center)
-        self.height = height
-        
-        # Handle scalar covariance input
-        if np.isscalar(covariance):
-            self.covariance = np.eye(len(center)) * covariance**2
-        else:
-            self.covariance = np.atleast_2d(covariance)
-        
-        # Validate covariance matrix
-        if self.covariance.shape[0] != self.covariance.shape[1]:
-            raise ValueError("Covariance matrix must be square")
-        if self.covariance.shape[0] != self.center.shape[0]:
-            raise ValueError("Covariance matrix dimension must match center dimension")
-        
-        # Compute inverse and determinant for efficient evaluation
-        self._cov_inv = np.linalg.inv(self.covariance)
-        self._det_cov = np.linalg.det(self.covariance)
-        if self._det_cov <= 0:
-            raise ValueError("Covariance matrix must be positive definite")
-    
-    def potential(self, position):
-        """
-        Apply bias potential at given position(s).
-        
-        Parameters:
-        -----------
-        position : ndarray, shape (..., d)
-            Positions at which to apply bias.
-        
-        Returns:
-        --------
-        bias : ndarray, shape (...)
-            Bias potential value(s).
-        """
-        pos = np.atleast_2d(position)
-        delta = pos - self.center
-        exponent = -0.5 * np.einsum('ij,jk,ik->i', delta, self._cov_inv, delta)
-        bias = self.height * np.exp(exponent)
-        return bias if position.ndim > 1 else bias[0]
     
     def gradient(self, position):
         """
@@ -121,7 +64,6 @@ class GaussianBias:
     def __repr__(self):
         return (f"GaussianBias(center={self.center}, covariance=\n{self.covariance}, height={self.height})")
     
-
 class SmartABC:
     """
     Autonomous Basin Climbing (ABC) algorithm with smart perturbation and biasing strategies.
@@ -136,8 +78,8 @@ class SmartABC:
         # Setup parameters
         run_mode="compromise",
         starting_position=None,
-        dump_interval = 3000, # Steps between data dumps
-        dump_folder = "data", 
+        dump_every = 50, # Iters between data dumps
+        dump_folder = "abc_data_dumps", 
 
         # Curvature estimation
         curvature_method="full_hessian",
@@ -177,9 +119,13 @@ class SmartABC:
         # Set up configuration parameters
         self.run_mode = run_mode
         self.curvature_method = curvature_method
-        self.dump_interval = dump_interval
-        self.dump_folder = dump_folder
-        os.makedirs(self.dump_folder, exist_ok=True)
+
+        self.dump_every = dump_every
+        self.dump_folder = dump_folder 
+        if dump_every != 0 and dump_folder is not None:
+            self.storage = ABCStorage(dump_folder, dump_every) 
+        else: 
+            self.storage = None 
         
         self.perturb_type = perturb_type
         self.perturb_dist = perturb_dist
@@ -198,6 +144,9 @@ class SmartABC:
         self.max_descent_steps = max_descent_steps
         self.max_descent_step_size = max_descent_step_size
         
+        # Automatically validate user input to minimize chance of conflicts later
+        self.validate_config()
+
         # Initialize state variables
         self.reset(starting_position)
 
@@ -214,23 +163,64 @@ class SmartABC:
         self.unbiased_energies = []
         self.biased_forces = []
         self.unbiased_forces = []
+
         self.minima = []
         self.saddles = []
+
         self._dimension = len(self.position)
-        self.total_force_calls = 0
-        self.iter_periods = []
+
         self.prev_mode = None
         self.most_recent_hessian = None
         self.most_recent_inv_hessian = None # Only used with curvature_method = "bfgs"
 
+        self.current_iteration = 0
+        self.iter_periods = [] 
+
     @property
     def dimension(self):
         return self._dimension
-
+    
     def validate_config(self):
         """Validate configuration parameters."""
         # TODO: Implement comprehensive validation
-        pass
+        print("Config Valid")
+
+    @classmethod
+    def load_from_disk(cls, folder_path, *args, **kwargs):
+        """Loads ABC instance from disk. Passes ABC creation args and kwargs to __init__."""
+        storage = ABCStorage(folder_path)
+        iteration = storage.get_most_recent_iter()
+        if iteration is None:
+            raise RuntimeError("No iterations found in storage.")
+        data = storage.load_iteration(iteration)
+        pos = data['history']['positions'][-1]
+        abc = cls(starting_position=pos, *args, **kwargs)
+        abc.current_iteration = iteration + 1
+        abc.bias_list = data['biases']
+        return abc 
+    
+    def clear_history_lists(self):
+        """
+        Clears possibly lengthy lists stored in RAM
+        I strongly recommend only ever using this after first calling dump_data()
+
+        Does NOT clear / reset non-list state variables (e.g. most_recent_hessian)
+        """
+        self.trajectory.clear()
+        self.unbiased_energies.clear()
+        self.biased_energies.clear()
+        self.unbiased_forces.clear()
+        self.biased_forces.clear()
+
+    def update_records(self):
+        """Update iteration number and dump history if it is time to do so"""
+        period = len(self.trajectory) - np.sum(self.iter_periods)
+        self.iter_periods.append(period)
+        
+        if self.storage and self.current_iteration % self.dump_every == 0:
+            self.storage.dump_current(self)
+            self.clear_history_lists() 
+        self.current_iteration += 1
 
     # Core functionality (adapted from TraditionalABC with enhancements)
     
@@ -296,13 +286,13 @@ class SmartABC:
         convergence_threshold = convergence_threshold or self.descent_convergence_threshold
 
         # Record initial state
-        self.forces.append(self.compute_force(self.position))
-        self.energies.append(self.total_potential(self.position))
+        self.biased_forces.append(self.compute_force(self.position))
+        self.biased_energies.append(self.total_potential(self.position))
         
         def callback(xk):
             self.trajectory.append(xk.copy())
-            self.forces.append(self.compute_force(xk))
-            self.energies.append(self.total_potential(xk))
+            self.biased_forces.append(self.compute_force(xk))
+            self.biased_energies.append(self.total_potential(xk))
             
         result = minimize(
             self.total_potential,
@@ -322,8 +312,8 @@ class SmartABC:
         # Record final state
         if len(self.trajectory) == 0 or not np.allclose(self.trajectory[-1], result.x):
             self.trajectory.append(result.x.copy())
-            self.forces.append(self.compute_force(result.x))
-            self.energies.append(self.total_potential(result.x))
+            self.biased_forces.append(self.compute_force(result.x))
+            self.biased_energies.append(self.total_potential(result.x))
 
         if self.curvature_method=="full_hessians":
             self.most_recent_hessian == self.compute_hessian_finite_difference(new_pos)
@@ -342,10 +332,10 @@ class SmartABC:
         if result.success:
             # If converged to near-0 force, check if also near-0 force on original PES 
             # reconstructing with cheap gradient calls instead of additional MD force calls
-            unbiased_force = self.forces[-1]
+            unbiased_force = self.biased_forces[-1]
             for bias in self.bias_list:
                 unbiased_force -= (-bias.gradient(new_pos))
-            print(f"Biased: {np.linalg.norm(self.forces[-1])}")
+            print(f"Biased: {np.linalg.norm(self.biased_forces[-1])}")
             print(f"Unbiased: {np.linalg.norm(unbiased_force)}")
             if np.isclose(np.linalg.norm(unbiased_force), 0, convergence_threshold):
                 # final check: if hessian info available, check if the hessian of the original PES indicates a minimum
@@ -590,8 +580,8 @@ class SmartABC:
         if message is not None:
             print(message)
         self.trajectory.append(self.position.copy())
-        self.forces.append(self.compute_force(self.position))
-        self.energies.append(self.total_potential(self.position))
+        self.biased_forces.append(self.compute_force(self.position))
+        self.biased_energies.append(self.total_potential(self.position))
 
     def suspected_climbing_too_long(self):
         # TODO: Implement
@@ -629,8 +619,7 @@ class SmartABC:
             # Deposit bias
             self.deposit_bias(pos)
             
-            # Record iteration
-            self.store_iter_period()
+            self.update_records()
             
             if verbose:
                 print(f"Iteration {iteration+1}/{max_iterations}: "
@@ -638,23 +627,19 @@ class SmartABC:
                       f"Position {self.position}, "
                       f"Total biases: {len(self.bias_list)}")
         
-        print(f"Simulation completed. Total steps: {len(self.trajectory)}")
-
-    def store_iter_period(self):
-        """Record number of steps in current iteration."""
-        period = len(self.trajectory) - np.sum(self.iter_periods)
-        self.iter_periods.append(period)
+        print(f"Simulation completed."
+              f"Identified minima: {self.minima}"
+              f"On-the-fly-identified saddle-points (usually none: should find in post-processing with analyzer): {self.saddles}")
 
     # Analysis and visualization
-    
     def get_trajectory(self):
         return np.array(self.trajectory)
         
     def get_forces(self):
-        return np.array(self.forces)
+        return np.array(self.biased_forces)
         
     def get_energies(self):
-        return np.array(self.energies)
+        return np.array(self.biased_energies)
         
     def get_bias_centers(self):
         return np.array([bias.center for bias in self.bias_list])
@@ -680,6 +665,9 @@ class SmartABC:
         else:
             raise NotImplementedError("Visualization not implemented for dimensions > 2")
         
+
+################################################################################
+# Testing 
 
 from potentials import Complex1D, DoubleWell1D, StandardMullerBrown2D
 from analysis import ABCAnalysis

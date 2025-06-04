@@ -9,10 +9,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from scipy.spatial.distance import cdist
+import h5py
+import os
 
 class ABCAnalysis:
     """
-    Comprehensive analysis toolkit for ABC simulations.
+    Comprehensive analysis toolkit for ABC simulations that works with:
+    - Live ABC simulation objects
+    - Saved data from ABCStorage folders
     
     Features:
     - Standard visualization (potential landscapes, trajectories)
@@ -23,15 +27,358 @@ class ABCAnalysis:
     - Exploration metrics
     """
     
-    def __init__(self, abc_sim):
+    def __init__(self, source):
         """
-        Initialize with an ABC simulation object.
+        Initialize with either:
+        - ABC simulation object (TraditionalABC or SmartABC)
+        - Path to ABCStorage folder
         
         Args:
-            abc_sim: ABC simulation instance (TraditionalABC or SmartABC)
+            source: Either ABC simulation instance or path string
         """
-        self.abc = abc_sim
-        self.dimension = abc_sim.dimension
+        if isinstance(source, str):
+            # Initialize from storage folder
+            self.from_storage = True
+            self.storage_path = source
+            self._init_from_storage()
+        else:
+            # Initialize from live simulation
+            self.from_storage = False
+            self.abc = source
+            self.dimension = source.dimension
+            
+    def _init_from_storage(self):
+        """Initialize analysis from storage folder"""
+        # Check if storage files exist
+        if not os.path.exists(self.storage_path):
+            raise ValueError(f"Storage path {self.storage_path} does not exist")
+            
+        # Find first chunk file to get dimension
+        chunk_files = [f for f in os.listdir(self.storage_path) if f.startswith('iters_')]
+        if not chunk_files:
+            raise ValueError("No chunk files found in storage directory")
+            
+        # Load first iteration from first chunk to get dimension
+        first_chunk = sorted(chunk_files)[0]
+        with h5py.File(os.path.join(self.storage_path, first_chunk), 'r') as f:
+            first_iter = sorted(f.keys())[0]  # Get first iteration group
+            positions = f[first_iter]['positions'][:]
+            self.dimension = positions.shape[1] if len(positions.shape) > 1 else 1
+            
+        # Initialize empty attributes that would exist in live simulation
+        self.abc = type('DummyABC', (), {})()  # Empty object to store attributes
+        self.abc.minima = []
+        self.abc.saddles = []
+        self.abc.bias_list = []
+        
+        # Load persistent files if they exist
+        self._load_persistent_data()
+        
+    def _load_persistent_data(self):
+        """Load biases and landmarks from persistent files"""
+        # Load biases
+        biases_file = os.path.join(self.storage_path, "biases.h5")
+        if os.path.exists(biases_file):
+            with h5py.File(biases_file, 'r') as f:
+                for iter_key in f:
+                    for bias_key in f[iter_key]:
+                        bg = f[iter_key][bias_key]
+                        self.abc.bias_list.append(type('Bias', (), {
+                            'center': bg['center'][:],
+                            'covariance': bg['covariance'][:],
+                            'height': bg.attrs['height']
+                        }))
+        
+        # Load landmarks
+        landmarks_file = os.path.join(self.storage_path, "landmarks.h5")
+        if os.path.exists(landmarks_file):
+            with h5py.File(landmarks_file, 'r') as f:
+                if 'minima' in f:
+                    for key in f['minima']:
+                        self.abc.minima.append(f['minima'][key][:])
+                if 'saddles' in f:
+                    for key in f['saddles']:
+                        self.abc.saddles.append(f['saddles'][key][:])
+    
+    def get_trajectory(self):
+        """Get complete trajectory from either live sim or storage"""
+        if not self.from_storage:
+            return self.abc.trajectory
+            
+        # Load trajectory from all chunk files
+        trajectory = []
+        chunk_files = sorted([f for f in os.listdir(self.storage_path) 
+                           if f.startswith('iters_')])
+        
+        for chunk_file in chunk_files:
+            with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                # Get iterations in chronological order
+                iterations = sorted([int(k.split('_')[1]) for k in f.keys() 
+                                   if k.startswith('iters_')])
+                for iter_num in iterations:
+                    iter_key = f"iter_{iter_num:06d}"
+                    trajectory.extend(f[iter_key]['positions'][:])
+                    
+        return trajectory
+    
+    def get_steps(self, iteration=None):
+        """
+        Return the step indices within the trajectory corresponding to the given iteration.
+        If iteration is None, returns all step indices.
+        """
+        if not self.from_storage:
+            if hasattr(self.abc, 'iter_periods'):
+                periods = self.abc.iter_periodsp
+            else:
+                return np.arange(len(self.abc.trajectory))
+        else:
+            chunk_files = sorted([f for f in os.listdir(self.storage_path) if f.startswith('iters_')])
+            periods = []
+            for chunk_file in chunk_files:
+                with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                    iterations = sorted([int(k.split('_')[1]) for k in f.keys() if k.startswith('iter_')])
+                    for iter_num in iterations:
+                        iter_key = f"iter_{iter_num:06d}"
+                        n_steps = len(f[iter_key]['positions'])
+                        periods.append(n_steps)
+            periods = np.array(periods)
+
+        if iteration is None:
+            return np.arange(np.sum(periods))
+        else:
+            start_idx = int(np.sum(periods[:iteration]))
+            end_idx = int(np.sum(periods[:iteration+1]))
+            return np.arange(start_idx, end_idx)
+    
+    def get_biased_energies(self):
+        """Get biased pes values from either live sim or storage"""
+        if not self.from_storage:
+            return self.abc.biased_energies if hasattr(self.abc, 'biased_energies') else []
+            
+        # Load energies from all chunk files
+        energies = []
+        chunk_files = sorted([f for f in os.listdir(self.storage_path) 
+                           if f.startswith('iters_')])
+        
+        for chunk_file in chunk_files:
+            with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                iterations = sorted([int(k.split('_')[1]) for k in f.keys() 
+                                   if k.startswith('iters_')])
+                for iter_num in iterations:
+                    iter_key = f"iter_{iter_num:06d}"
+                    energies.extend(f[iter_key]['biased_energies'][:])
+                    
+        return energies
+    
+    def get_unbiased_energies(self):
+        """Get unbiased pes values from either live sim or storage"""
+        if not self.from_storage:
+            return self.abc.biased_energies if hasattr(self.abc, 'unbiased_energies') else []
+            
+        # Load energies from all chunk files
+        energies = []
+        chunk_files = sorted([f for f in os.listdir(self.storage_path) 
+                           if f.startswith('iters_')])
+        
+        for chunk_file in chunk_files:
+            with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                iterations = sorted([int(k.split('_')[1]) for k in f.keys() 
+                                   if k.startswith('iters_')])
+                for iter_num in iterations:
+                    iter_key = f"iter_{iter_num:06d}"
+                    energies.extend(f[iter_key]['unbiased_energies'][:])
+                    
+        return energies
+    
+    def get_biased_forces(self):
+        """Get biased force values from either live sim or storage"""
+        if not self.from_storage:
+            return self.abc.biased_forces if hasattr(self.abc, 'biased_forces') else []
+            
+        # Load forces from all chunk files
+        forces = []
+        chunk_files = sorted([f for f in os.listdir(self.storage_path) 
+                           if f.startswith('iters_')])
+        
+        for chunk_file in chunk_files:
+            with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                iterations = sorted([int(k.split('_')[1]) for k in f.keys() 
+                                   if k.startswith('iters_')])
+                for iter_num in iterations:
+                    iter_key = f"iter_{iter_num:06d}"
+                    forces.extend(f[iter_key]['biased_forces'][:])
+                    
+        return forces
+    
+    def get_unbiased_forces(self):
+        """Get unbiased force values from either live sim or storage"""
+        if not self.from_storage:
+            return self.abc.biased_forces if hasattr(self.abc, 'unbiased_forces') else []
+            
+        # Load forces from all chunk files
+        forces = []
+        chunk_files = sorted([f for f in os.listdir(self.storage_path) 
+                           if f.startswith('iters_')])
+        
+        for chunk_file in chunk_files:
+            with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                iterations = sorted([int(k.split('_')[1]) for k in f.keys() 
+                                   if k.startswith('iters_')])
+                for iter_num in iterations:
+                    iter_key = f"iter_{iter_num:06d}"
+                    forces.extend(f[iter_key]['unbiased_forces'][:])
+                    
+        return forces
+    
+    def get_perturbation_steps(self):
+        """Identify steps where perturbations occurred."""
+        if self.from_storage:
+            # For storage mode, infer perturbation steps from chunk files and iteration lengths
+            pert_steps = []
+            current_step = 0
+            chunk_files = sorted([f for f in os.listdir(self.storage_path) if f.startswith('iters_')])
+            for chunk_file in chunk_files:
+                with h5py.File(os.path.join(self.storage_path, chunk_file), 'r') as f:
+                    iterations = sorted([int(k.split('_')[1]) for k in f.keys() if k.startswith('iter_')])
+                    for iter_num in iterations:
+                        iter_key = f"iter_{iter_num:06d}"
+                        n_steps = len(f[iter_key]['positions'])
+                        # Last step of each iteration is a perturbation
+                        pert_steps.append(current_step + n_steps - 1)
+                        current_step += n_steps
+            return np.array(pert_steps, dtype=int)
+        else:
+            if not hasattr(self.abc, 'iter_periods'):
+                return np.array([], dtype=int)
+            pert_steps = []
+            tot_steps = 0
+            for period in self.abc.iter_periods:
+                # Last step of each period is the perturbation
+                if tot_steps + period - 1 < len(self.abc.trajectory):
+                    pert_steps.append(tot_steps + period - 1)
+                tot_steps += period
+            return np.array(pert_steps, dtype=int)
+
+    def get_bias_steps(self):
+        """Identify steps where biases were placed (step before perturbation)."""
+        pert_steps = self.get_perturbation_steps()
+        return pert_steps - 1 if pert_steps.size > 0 else np.array([], dtype=int)
+    
+    def _log_levels(self, Z, num):
+        """Generate log-spaced contour levels."""
+        Z_min = np.min(Z)
+        Z_shifted = Z - Z_min + 1e-1
+        log_levels = np.logspace(np.log10(1e-1), np.log10(np.max(Z_shifted)), num=num)
+        return log_levels + Z_min
+    
+    def _save_plot(self, fig, filename, save_plots):
+        """Save plot if requested."""
+        if save_plots:
+            if filename is None:
+                filename = "abc_results.png"
+            fig.savefig(filename, dpi=300, bbox_inches='tight')
+
+    def transition_statistics(self, iteration=None):
+        """
+        Compute statistics for a specific iteration or all iterations.
+
+        Returns:
+            Dictionary containing:
+            - positions
+            - unbiased energies
+            - biased energies
+            - forces
+            - step types (perturbation/descent)
+        """
+        positions = np.array(self.get_trajectory())
+        unbiased_energies = np.array(self.get_unbiased_energies())
+        biased_energies = np.array(self.get_biased_energies())
+        unbiased_forces = np.array(self.get_unbiased_forces()) 
+        biased_forces = np.array(self.get_biased_forces()) 
+        steps = np.array(self.get_steps(iteration=iteration))
+        return {
+            'positions': positions,
+            'unbiased_energies': unbiased_energies,
+            'biased_energies': biased_energies,
+            'unbiased_forces': unbiased_forces,
+            'biased_forces': biased_forces,
+            'steps': steps
+        }
+
+    def analyze_minima_saddles(self, proximity_radius=None):
+        """
+        Analyze minima and saddles found during simulation.
+        
+        Args:
+            proximity_radius: If not None, also counts points within this distance of minima/saddles
+            
+        Returns:
+            Dictionary containing analysis of minima and saddles
+        """
+        analysis = {'minima': [], 'saddles': []}
+        
+        if not hasattr(self.abc, 'minima') or not self.abc.minima:
+            print("No minima identified in simulation")
+            return analysis
+        
+        trajectory = np.array(self.get_trajectory())
+        
+        # Analyze minima
+        print("\nMinima Analysis:")
+        print("-" * 40)
+        for i, min_pos in enumerate(self.abc.minima):
+            min_data = {'position': min_pos}
+            
+            # Find closest point in trajectory
+            dists = np.linalg.norm(trajectory - min_pos, axis=1)
+            closest_idx = np.argmin(dists)
+            min_data['closest_distance'] = dists[closest_idx]
+            min_data['closest_energy'] = self.get_unbiased_energies()[closest_idx] 
+            
+            # Count points within proximity radius if requested
+            if proximity_radius is not None:
+                nearby = np.sum(dists < proximity_radius)
+                min_data['points_within_radius'] = nearby
+                print(f"Minimum {i} at {min_pos}:")
+                print(f"  Closest approach: {min_data['closest_distance']:.3f} distance")
+                print(f"  Closest energy: {min_data['closest_energy']:.3f}" if min_data['closest_energy'] is not None else "")
+                print(f"  Points within {proximity_radius} radius: {nearby}")
+            else:
+                print(f"Minimum {i} at {min_pos}:")
+                print(f"  Closest approach: {min_data['closest_distance']:.3f} distance")
+                print(f"  Closest energy: {min_data['closest_energy']:.3f}" if min_data['closest_energy'] is not None else "")
+            
+            analysis['minima'].append(min_data)
+        
+        # Analyze saddles if available
+        if hasattr(self.abc, 'saddles') and self.abc.saddles:
+            print("\nSaddle Analysis:")
+            print("-" * 40)
+            for i, sad_pos in enumerate(self.abc.saddles):
+                sad_data = {'position': sad_pos}
+                
+                # Find closest point in trajectory
+                dists = np.linalg.norm(trajectory - sad_pos, axis=1)
+                closest_idx = np.argmin(dists)
+                sad_data['closest_distance'] = dists[closest_idx]
+                sad_data['closest_energy'] = self.get_unbiased_energies()[closest_idx] 
+                
+                # Count points within proximity radius if requested
+                if proximity_radius is not None:
+                    nearby = np.sum(dists < proximity_radius)
+                    sad_data['points_within_radius'] = nearby
+                    print(f"Saddle {i} at {sad_pos}:")
+                    print(f"  Closest approach: {sad_data['closest_distance']:.3f} distance")
+                    print(f"  Closest energy: {sad_data['closest_energy']:.3f}" if sad_data['closest_energy'] is not None else "")
+                    print(f"  Points within {proximity_radius} radius: {nearby}")
+                else:
+                    print(f"Saddle {i} at {sad_pos}:")
+                    print(f"  Closest approach: {sad_data['closest_distance']:.3f} distance")
+                    print(f"  Closest energy: {sad_data['closest_energy']:.3f}" if sad_data['closest_energy'] is not None else "")
+                
+                analysis['saddles'].append(sad_data)
+        
+        return analysis
         
     def plot_summary(self, filename=None, save_plots=False, plot_type='both'):
         """
@@ -47,7 +394,7 @@ class ABCAnalysis:
         else:
             print(f"Standard visualization not supported for {self.dimension}D systems")
             self.plot_diagnostics(plot_type=plot_type)
-    
+
     def _plot_1d_summary(self, filename=None, save_plots=False, plot_type='both'):
         """1D summary plots (potential, trajectory, histogram, energy profile)."""
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
@@ -73,7 +420,7 @@ class ABCAnalysis:
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: Trajectory with markers
-        trajectory = self.abc.get_trajectory()
+        trajectory = self.get_trajectory
         times = np.arange(len(trajectory))
         ax2.plot(times, trajectory, 'g-', alpha=0.7, linewidth=1)
         
@@ -156,7 +503,7 @@ class ABCAnalysis:
         ax2.grid(True, alpha=0.3)
         
         # Plot 3: Trajectory with markers
-        trajectory = self.abc.get_trajectory()
+        trajectory = self.get_trajectory()
         if len(trajectory) > 1:
             points = np.array(trajectory).reshape(-1,1,2)
             segments = np.concatenate([points[:-1], points[1:]], axis=1)
@@ -207,14 +554,13 @@ class ABCAnalysis:
         - Barrier height estimates between identified minima
         """
         fig, axes = plt.subplots(3, 1, figsize=(10, 12))
-        tpw_info = self.transition_statistics()
         
         # Plot 1: Force magnitude (both biased and unbiased)
-        forces = tpw_info['forces']
+        forces = self.get_unbiased_forces()
         force_mags = np.linalg.norm(forces, axis=1) if forces.ndim > 1 else np.abs(forces)
         axes[0].plot(force_mags, 'b-', label='Unbiased Force')
         
-        biased_forces = tpw_info['biased_forces']
+        biased_forces = self.get_biased_forces()
         biased_force_mags = np.linalg.norm(biased_forces, axis=1) if biased_forces.ndim > 1 else np.abs(biased_forces)
         axes[0].plot(biased_force_mags, 'c-', alpha=0.7, label='Biased Force')
         
@@ -225,8 +571,8 @@ class ABCAnalysis:
         
         
         # Plot 2: Energy diagnostics
-        energies = tpw_info['energies']
-        biased_energies = tpw_info['biased_energies']
+        energies = self.get_unbiased_energies()
+        biased_energies = self.get_biased_energies()
         axes[1].plot(energies, color='orange', label='Unbiased PES')
         axes[1].plot(biased_energies, color='blue', alpha=0.5, label='Biased PES')
         axes[1].set_title('Energy Profile')
@@ -249,15 +595,15 @@ class ABCAnalysis:
                 axes[1].scatter(pert_steps, energies[pert_steps], c='blue', s=30, label='Perturbations')
         
         # Plot 3: Barrier height estimates between identified minima
-        if hasattr(self.abc, 'energies') and len(self.abc.energies) > 0 and hasattr(self.abc, 'minima'):
-            energies = np.array(self.abc.energies)
+        if len(self.get_unbiased_energies) > 0 and hasattr(self.abc, 'minima'):
+            energies = np.array(self.get_unbiased_energies)
             if energies.ndim > 1:
                 energies = energies.flatten()
             
             minima_indices = []
             for min_pos in self.abc.minima:
                 # Find closest point in trajectory to each minimum
-                traj = np.array(self.abc.get_trajectory())
+                traj = np.array(self.get_trajectory())
                 dists = np.linalg.norm(traj - min_pos, axis=1)
                 minima_indices.append(np.argmin(dists))
             
@@ -292,7 +638,7 @@ class ABCAnalysis:
 
     def _plot_exploration_metrics(self, ax):
         """Plot exploration metrics on provided axis."""
-        trajectory = self.abc.get_trajectory()
+        trajectory = self.get_trajectory()
         if len(trajectory) > 2:
             # Cumulative distance from start
             start = trajectory[0]
@@ -315,212 +661,14 @@ class ABCAnalysis:
         else:
             ax.text(0.5, 0.5, 'Not enough data', ha='center', va='center')
     
-    def analyze_minima_saddles(self, proximity_radius=None):
-        """
-        Analyze minima and saddles found during simulation.
         
-        Args:
-            proximity_radius: If not None, also counts points within this distance of minima/saddles
-            
-        Returns:
-            Dictionary containing analysis of minima and saddles
-        """
-        analysis = {'minima': [], 'saddles': []}
-        
-        if not hasattr(self.abc, 'minima') or not self.abc.minima:
-            print("No minima identified in simulation")
-            return analysis
-        
-        trajectory = np.array(self.abc.get_trajectory())
-        
-        # Analyze minima
-        print("\nMinima Analysis:")
-        print("-" * 40)
-        for i, min_pos in enumerate(self.abc.minima):
-            min_data = {'position': min_pos}
-            
-            # Find closest point in trajectory
-            dists = np.linalg.norm(trajectory - min_pos, axis=1)
-            closest_idx = np.argmin(dists)
-            min_data['closest_distance'] = dists[closest_idx]
-            min_data['closest_energy'] = self.abc.energies[closest_idx] if hasattr(self.abc, 'energies') else None
-            
-            # Count points within proximity radius if requested
-            if proximity_radius is not None:
-                nearby = np.sum(dists < proximity_radius)
-                min_data['points_within_radius'] = nearby
-                print(f"Minimum {i} at {min_pos}:")
-                print(f"  Closest approach: {min_data['closest_distance']:.3f} distance")
-                print(f"  Closest energy: {min_data['closest_energy']:.3f}" if min_data['closest_energy'] is not None else "")
-                print(f"  Points within {proximity_radius} radius: {nearby}")
-            else:
-                print(f"Minimum {i} at {min_pos}:")
-                print(f"  Closest approach: {min_data['closest_distance']:.3f} distance")
-                print(f"  Closest energy: {min_data['closest_energy']:.3f}" if min_data['closest_energy'] is not None else "")
-            
-            analysis['minima'].append(min_data)
-        
-        # Analyze saddles if available
-        if hasattr(self.abc, 'saddles') and self.abc.saddles:
-            print("\nSaddle Analysis:")
-            print("-" * 40)
-            for i, sad_pos in enumerate(self.abc.saddles):
-                sad_data = {'position': sad_pos}
-                
-                # Find closest point in trajectory
-                dists = np.linalg.norm(trajectory - sad_pos, axis=1)
-                closest_idx = np.argmin(dists)
-                sad_data['closest_distance'] = dists[closest_idx]
-                sad_data['closest_energy'] = self.abc.energies[closest_idx] if hasattr(self.abc, 'energies') else None
-                
-                # Count points within proximity radius if requested
-                if proximity_radius is not None:
-                    nearby = np.sum(dists < proximity_radius)
-                    sad_data['points_within_radius'] = nearby
-                    print(f"Saddle {i} at {sad_pos}:")
-                    print(f"  Closest approach: {sad_data['closest_distance']:.3f} distance")
-                    print(f"  Closest energy: {sad_data['closest_energy']:.3f}" if sad_data['closest_energy'] is not None else "")
-                    print(f"  Points within {proximity_radius} radius: {nearby}")
-                else:
-                    print(f"Saddle {i} at {sad_pos}:")
-                    print(f"  Closest approach: {sad_data['closest_distance']:.3f} distance")
-                    print(f"  Closest energy: {sad_data['closest_energy']:.3f}" if sad_data['closest_energy'] is not None else "")
-                
-                analysis['saddles'].append(sad_data)
-        
-        return analysis
-    
-    def _get_bias_steps(self):
-        """Identify steps where biases were placed (step before perturbation)."""
-        pert_steps = self._get_perturbation_steps()
-        return pert_steps - 1 if pert_steps.size > 0 else np.array([], dtype=int)
-    
-    def _get_perturbation_steps(self):
-        """Identify steps where perturbations occurred."""
-        if not hasattr(self.abc, 'iter_periods'):
-            return np.array([], dtype=int)
-        
-        pert_steps = []
-        tot_steps = 0
-        for period in self.abc.iter_periods:
-            # Last step of each period is the perturbation
-            if tot_steps + period - 1 < len(self.abc.trajectory):
-                pert_steps.append(tot_steps + period - 1)
-            tot_steps += period
-        return np.array(pert_steps, dtype=int)
-    
-    def _log_levels(self, Z, num):
-        """Generate log-spaced contour levels."""
-        Z_min = np.min(Z)
-        Z_shifted = Z - Z_min + 1e-1
-        log_levels = np.logspace(np.log10(1e-1), np.log10(np.max(Z_shifted)), num=num)
-        return log_levels + Z_min
-    
-    def _save_plot(self, fig, filename, save_plots):
-        """Save plot if requested."""
-        if save_plots:
-            if filename is None:
-                filename = "abc_results.png"
-            fig.savefig(filename, dpi=300, bbox_inches='tight')
+    # Legacy functions for backward compatibility
+    def plot_results(abc_sim, filename=None, save_plots=False):
+        """Legacy function - use ABCAnalysis class for new code."""
+        analyzer = ABCAnalysis(abc_sim)
+        analyzer.plot_summary(filename, save_plots)
 
-    def transition_statistics(self, iteration=None):
-        """
-        Compute statistics for a specific iteration or all iterations.
-        
-        Returns:
-            Dictionary containing:
-            - positions
-            - unbiased energies
-            - biased energies
-            - forces
-            - step types (perturbation/descent)
-        """
-        if iteration is not None:
-            # Get data for specific iteration
-            start_idx = np.sum(self.abc.iter_periods[:iteration])
-            end_idx = np.sum(self.abc.iter_periods[:iteration+1])
-            times = np.arange(start_idx, end_idx)
-            traj = self.abc.trajectory[start_idx:end_idx]
-            biased_pes = self.abc.energies[start_idx:end_idx]
-            biased_forces = self.abc.forces[start_idx:end_idx]
-            
-            # Calculate biased PES
-            unbiased_pes = biased_pes.copy()
-            unbiased_forces = biased_forces.copy()
-            for bias in self.abc.bias_list[:iteration]:  # Only use biases up to current iteration
-                unbiased_pes -= np.array([bias.potential(p) for p in traj])
-                unbiased_forces -= np.array([-1*bias.gradient(p) for p in traj])
-            
-            return {
-                'positions': traj,
-                'unbiased_energies': unbiased_pes,
-                'biased_energies': biased_pes,
-                'unbiased_forces': unbiased_forces,
-                'biased_forces': biased_forces,
-                'times': times
-            }
-        else:
-            # Return statistics for all iterations
-            # Initialize containers for concatenated data
-            all_traj = []
-            all_pes = []
-            all_biased_pes = []
-            all_forces = []
-            all_biased_forces = []
-            all_times = []
-            
-            for i in range(len(self.abc.iter_periods)):
-                # Get data for each iteration
-                start_idx = int(np.sum(self.abc.iter_periods[:i]))
-                end_idx = int(np.sum(self.abc.iter_periods[:i+1]))
-                
-                # Append data to containers
-                all_traj.append(self.abc.trajectory[start_idx:end_idx])
-                all_pes.append(self.abc.energies[start_idx:end_idx])
-                all_times.append(np.arange(start_idx, end_idx))
-                
-                # Calculate forces and biased quantities
-                forces = self.abc.forces[start_idx:end_idx]
-                biased_pes = np.array(self.abc.energies[start_idx:end_idx].copy())
-                biased_forces = np.array(forces.copy())
-                
-                for bias in self.abc.bias_list[:i]:
-                    traj_slice = self.abc.trajectory[start_idx:end_idx]
-                    # Ensure the bias potential outputs are the correct shape
-                    bias_potentials = np.array([bias.potential(p) for p in traj_slice])
-                    bias_gradients = np.array([bias.gradient(p) for p in traj_slice])
-                    
-                    # Reshape if necessary to match dimensions
-                    if biased_pes.ndim == 2 and bias_potentials.ndim == 1:
-                        bias_potentials = bias_potentials.reshape(-1, 1)
-                    if biased_forces.ndim == 2 and bias_gradients.ndim == 1:
-                        bias_gradients = bias_gradients.reshape(-1, 1)
-                        
-                    biased_pes += bias_potentials
-                    biased_forces += -1*bias_gradients
-                
-                all_forces.append(forces)
-                all_biased_pes.append(biased_pes)
-                all_biased_forces.append(biased_forces)
-            
-            # Concatenate all arrays
-            return {
-                'positions': np.concatenate(all_traj),
-                'energies': np.concatenate(all_pes),
-                'biased_energies': np.concatenate(all_biased_pes),
-                'forces': np.concatenate(all_forces),
-                'biased_forces': np.concatenate(all_biased_forces),
-                'times': np.concatenate(all_times)
-            }
-
-
-# Legacy functions for backward compatibility
-def plot_results(abc_sim, filename=None, save_plots=False):
-    """Legacy function - use ABCAnalysis class for new code."""
-    analyzer = ABCAnalysis(abc_sim)
-    analyzer.plot_summary(filename, save_plots)
-
-def analyze_basin_visits(abc_sim, basin_radius=0.3, verbose=True):
-    """Legacy function - use ABCAnalysis class for new code."""
-    analyzer = ABCAnalysis(abc_sim)
-    return analyzer.analyze_minima_saddles(basin_radius)
+    def analyze_basin_visits(abc_sim, basin_radius=0.3, verbose=True):
+        """Legacy function - use ABCAnalysis class for new code."""
+        analyzer = ABCAnalysis(abc_sim)
+        return analyzer.analyze_minima_saddles(basin_radius)

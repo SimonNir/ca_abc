@@ -383,7 +383,7 @@ class TraditionalABC:
             raise NotImplementedError("Visualization not implemented for dimensions > 2")
 
 
-from analysis_deprecated import plot_results, analyze_basin_visits
+from deprecated.analysis_deprecated import plot_results, analyze_basin_visits
 from potentials import DoubleWell1D, StandardMullerBrown2D, Complex1D
 
 def run_1d_simulation():

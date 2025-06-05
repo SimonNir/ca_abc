@@ -6,18 +6,18 @@ from bias import GaussianBias
 class ABCStorage:
     def __init__(self, run_dir="abc_data", iterations_per_file=50):
         """
-        Simplified storage system that:
+        Storage system that handles all data persistence for ABC simulations.
         - Groups N iterations per file with iteration ranges in filenames
         - Maintains persistent bias/minima/saddles files
-        - Enables fast lookup using filename patterns
+        - Provides clean interface for data access
         """
         self.run_dir = run_dir
         self.iterations_per_file = iterations_per_file
         os.makedirs(run_dir, exist_ok=True)
         
         # Initialize persistent files
-        self.biases_file = f"{run_dir}/biases.h5"
-        self.landmarks_file = f"{run_dir}/landmarks.h5"
+        self.biases_file = os.path.join(run_dir, "biases.h5")
+        self.landmarks_file = os.path.join(run_dir, "landmarks.h5")
 
         # Initialize empty files if they don't exist
         for fname in [self.biases_file, self.landmarks_file]:
@@ -29,14 +29,14 @@ class ABCStorage:
         """Generate filename containing iteration range"""
         start_iter = (iteration // self.iterations_per_file) * self.iterations_per_file
         end_iter = start_iter + self.iterations_per_file - 1
-        return f"{self.run_dir}/iters_{start_iter:06d}_{end_iter:06d}.h5"
+        return os.path.join(self.run_dir, f"iters_{start_iter:06d}_{end_iter:06d}.h5")
 
     def dump_current(self, abc_instance):
         """Dump current ABC data with iteration range in filename"""
         iteration = abc_instance.current_iteration
         filename = self._get_iter_filename(iteration)
         
-        # 1. Prepare trajectory data
+        # Prepare trajectory data
         history = {
             'positions': np.array(abc_instance.trajectory),
             'biased_energies': np.array(abc_instance.biased_energies),
@@ -45,14 +45,14 @@ class ABCStorage:
             'unbiased_forces': np.array(abc_instance.unbiased_forces),
         }
 
-        # 2. Atomic write of trajectory data with checks 
+        # Atomic write of trajectory data
         tmp_file = f"{filename}.tmp"
         try: 
             with h5py.File(tmp_file, 'w') as f:
                 # Store iteration range as attributes
                 f.attrs['iter_start'] = (iteration // self.iterations_per_file) * self.iterations_per_file
                 f.attrs['iter_end'] = f.attrs['iter_start'] + self.iterations_per_file - 1
-                f.attrs['iterations_per_file'] = self.iterations_per_file  # For validation
+                f.attrs['iterations_per_file'] = self.iterations_per_file
 
                 # Store current iteration data
                 iter_group = f.create_group(f"iter_{iteration:06d}")
@@ -68,17 +68,17 @@ class ABCStorage:
                 os.remove(tmp_file)
             raise RuntimeError(f"Failed to write iteration chunk file: {str(e)}")
         
-        # 3. Append to persistent files (biases and landmarks)
+        # Append to persistent files
         self._append_biases(iteration, abc_instance.bias_list)
-        self._append_minima(iteration, abc_instance.minima)
-        self._append_saddles(iteration, abc_instance.saddles)
-        self._append_iter_periods(iteration, abc_instance.iter_periods)
+        self._append_landmarks(iteration, 'minima', abc_instance.minima)
+        self._append_landmarks(iteration, 'saddles', abc_instance.saddles)
+        self._append_landmarks(iteration, 'iter_periods', abc_instance.iter_periods)
 
     def _append_biases(self, iteration, biases):
-        """Append the most recent biases to persistent storage"""
+        """Append biases to persistent storage"""
         if not biases:
             return
-        # Add the last N biases, where N = self.iterations_per_file (or dump_every)
+            
         recent_biases = biases[-self.iterations_per_file:]
         with h5py.File(self.biases_file, 'a') as f:
             iter_group = f.create_group(f"iter_{iteration}")
@@ -88,42 +88,20 @@ class ABCStorage:
                 bg.create_dataset('covariance', data=bias.covariance)
                 bg.attrs['height'] = bias.height
 
-    def _append_minima(self, iteration, minima):
-        """Append the most recent minima to persistent landmarks file"""
-        if not minima:
+    def _append_landmarks(self, iteration, landmark_type, landmarks):
+        """Generic method to append landmarks (minima/saddles/periods)"""
+        if not landmarks:
             return
-        recent_minima = minima[-self.iterations_per_file:]
+            
+        recent_landmarks = landmarks[-self.iterations_per_file:]
         with h5py.File(self.landmarks_file, 'a') as f:
-            if 'minima' not in f:
-                f.create_group('minima')
-            for i, min_pos in enumerate(recent_minima):
-                f['minima'].create_dataset(f"{iteration}_{i}", data=min_pos)
-
-    def _append_saddles(self, iteration, saddles):
-        """Append the most recent saddles to persistent landmarks file"""
-        if not saddles:
-            return
-        recent_saddles = saddles[-self.iterations_per_file:]
-        with h5py.File(self.landmarks_file, 'a') as f:
-            if 'saddles' not in f:
-                f.create_group('saddles')
-            for i, saddle_pos in enumerate(recent_saddles):
-                f['saddles'].create_dataset(f"{iteration}_{i}", data=saddle_pos)
-
-    def _append_iter_periods(self, iteration, iter_periods):
-        """Append the most recent iter_periods to persistent landmarks file"""
-        if not iter_periods:
-            return
-        recent_iter_periods = iter_periods[-self.iterations_per_file:]
-        with h5py.File(self.landmarks_file, 'a') as f:
-            if 'iter_periods' not in f:
-                f.create_group('iter_periods')
-            for i, iter_period in enumerate(recent_iter_periods):
-                f['iter_periods'].create_dataset(f"{iteration}_{i}", data=iter_period)
+            if landmark_type not in f:
+                f.create_group(landmark_type)
+            for i, landmark in enumerate(recent_landmarks):
+                f[landmark_type].create_dataset(f"{iteration}_{i}", data=landmark)
 
     def load_iteration(self, iteration):
-        """Load data for specific iteration"""
-
+        """Load complete data for specific iteration"""
         if not 0 <= iteration <= 999999:
             raise ValueError("Iteration must be between 0 and 999,999")
             
@@ -131,24 +109,21 @@ class ABCStorage:
         if not os.path.exists(filename):
             raise FileNotFoundError(f"No data found for iteration {iteration}")
         
-        history = {}
-        
         # Load trajectory data
         with h5py.File(filename, 'r') as f:
-            iter_group = f[f"iter_{iteration}"]
-            for key in iter_group:
-                if isinstance(iter_group[key], h5py.Dataset):
-                    history[key] = iter_group[key][:]
-                else:
-                    history[key] = iter_group[key].attrs[key]
+            iter_group = f[f"iter_{iteration:06d}"]
+            history = {
+                key: iter_group[key][:] if isinstance(iter_group[key], h5py.Dataset) 
+                else iter_group.attrs[key]
+                for key in iter_group
+            }
         
         # Load biases
         biases = []
         with h5py.File(self.biases_file, 'r') as f:
             if f"iter_{iteration}" in f:
-                bias_group = f[f"iter_{iteration}"]
-                for bias_key in bias_group:
-                    bg = bias_group[bias_key]
+                for bias_key in f[f"iter_{iteration}"]:
+                    bg = f[f"iter_{iteration}"][bias_key]
                     biases.append(GaussianBias(
                         center=bg['center'][:],
                         covariance=bg['covariance'][:],
@@ -156,49 +131,52 @@ class ABCStorage:
                     ))
         
         # Load landmarks
-        minima, saddles = [], []
+        landmarks = {}
         with h5py.File(self.landmarks_file, 'r') as f:
-            if 'minima' in f:
-                minima = [f['minima'][key][:] for key in f['minima'] if str(iteration) in key]
-            if 'saddles' in f:
-                saddles = [f['saddles'][key][:] for key in f['saddles'] if str(iteration) in key]
+            for landmark_type in ['minima', 'saddles', 'iter_periods']:
+                if landmark_type in f:
+                    landmarks[landmark_type] = [
+                        f[landmark_type][key][:] 
+                        for key in f[landmark_type] 
+                        if str(iteration) in key
+                    ]
         
         return {
             'history': history,
             'biases': biases,
-            'minima': minima,
-            'saddles': saddles
+            **landmarks
         }
 
     def get_all_files(self):
-        """Get all iters files in chronological order"""
-        files = sorted([f for f in os.listdir(self.run_dir) if f.startswith('iters_')])
+        """Get all iteration files in chronological order"""
+        files = sorted(
+            f for f in os.listdir(self.run_dir) 
+            if f.startswith('iters_') and f.endswith('.h5')
+        )
         return [os.path.join(self.run_dir, f) for f in files]
     
-    # Additional utility methods
     def find_iterations_in_range(self, start_iter, end_iter):
         """Find all iterations within a range"""
         files = []
         current = start_iter
         while current <= end_iter:
-            start_iter = (current // self.iterations_per_file) * self.iterations_per_file
-            end_iter = start_iter + self.iterations_per_file - 1
-            filename = f"iters_{start_iter:06d}_{end_iter:06d}.h5"
+            start_file_iter = (current // self.iterations_per_file) * self.iterations_per_file
+            end_file_iter = start_file_iter + self.iterations_per_file - 1
+            filename = f"iters_{start_file_iter:06d}_{end_file_iter:06d}.h5"
             if os.path.exists(os.path.join(self.run_dir, filename)):
-                files.append((start_iter, end_iter, filename))
-            current = end_iter + 1
+                files.append((start_file_iter, end_file_iter, filename))
+            current = end_file_iter + 1
         return files
 
     def get_total_iterations(self):
         """Count total iterations stored"""
-        chunks = sorted([f for f in os.listdir(self.run_dir) if f.startswith('iters_')])
+        chunks = self.get_all_files()
         if not chunks:
             return 0
         last_chunk = chunks[-1]
-        with h5py.File(os.path.join(self.run_dir, last_chunk), 'r') as f:
+        with h5py.File(last_chunk, 'r') as f:
             return f.attrs['iter_end'] + 1  # +1 since end is inclusive
         
-
     def get_most_recent_iter(self):
         """Return the most recent iteration number stored, or None if none exist."""
         files = self.get_all_files()

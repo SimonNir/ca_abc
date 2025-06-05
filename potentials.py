@@ -9,16 +9,16 @@ class PotentialEnergySurface(ABC):
     """Abstract base class for potential energy surfaces."""
     
     @abstractmethod
-    def potential(self, position):
+    def potential(self, position: np.ndarray) -> float: 
         """Compute potential energy at given position."""
         pass
         
     @abstractmethod
-    def default_starting_position(self):
+    def default_starting_position(self) -> np.ndarray:
         """Return default starting position for this PES."""
         pass
         
-    def gradient(self, position):
+    def gradient(self, position) -> np.ndarray:
         """Compute analytic gradient at given position, if available
         Raise NotImplementedError if not implemented.
         
@@ -27,15 +27,15 @@ class PotentialEnergySurface(ABC):
         """
         raise NotImplementedError("Analytic gradient not implemented for this PES.")
 
-    def plot_range(self):
+    def plot_range(self) -> tuple:
         """Return plotting range for visualization."""
         return None
         
-    def known_minima(self):
+    def known_minima(self) -> list[np.ndarray]:
         """Return known basins (for analysis)."""
         return None 
 
-    def known_saddles(self):
+    def known_saddles(self) -> list[np.ndarray]:
         """Return known saddles (for analysis)."""
         return None
 
@@ -52,7 +52,7 @@ class DoubleWell1D(PotentialEnergySurface):
         return 1/6 * (5 * (x**2 - 1))**2
     
     def gradient(self, x):
-        return 50/3 * x * (x**2-1)
+        return np.array([50/3 * x * (x**2-1)])
         
     def default_starting_position(self):
         return np.array([-1.0], dtype=float)
@@ -142,8 +142,13 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             exp_term = np.exp(np.clip(exponent, -100, 100))
             dVdx += self.A[i] * exp_term * (2*self.a[i]*dx + self.b[i]*dy)
             dVdy += self.A[i] * exp_term * (self.b[i]*dx + 2*self.c[i]*dy)
-
-        return np.array([dVdx, dVdy])
+        
+        grad = np.array([dVdx, dVdy])
+        if (norm := np.linalg.norm(grad)) > 500.: 
+            print(f"Warning: Gradient value of {grad} detected as likely unphysically large in magnitude; shrunk to magnitude 500")
+            grad = 500 * grad / norm  
+            
+        return grad 
 
     def default_starting_position(self):
         return np.array([0.0, 0.0], dtype=float)

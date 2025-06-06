@@ -412,7 +412,7 @@ class ABCAnalysis:
             distances = cdist(trajectory, [trajectory[0]]).flatten()
             ax.plot(distances, 'b-', label='Distance from Start')
             
-            window_size = min(10, len(trajectory)//3)
+            window_size = min(3, len(trajectory)//3)
             variances = []
             for i in range(len(trajectory)-window_size):
                 variances.append(np.sum(np.var(trajectory[i:i+window_size], axis=0)))

@@ -7,18 +7,32 @@ import numpy as np
 
 class PotentialEnergySurface(ABC):
     """Abstract base class for potential energy surfaces."""
+
+    def __init__(self): 
+        self.max_acceptable_force_mag = np.inf # will be updated by ABC later
+        self.energy_calls = 0 
+        self.force_calls = 0
     
     @abstractmethod
-    def potential(self, position: np.ndarray) -> float: 
+    def _potential(self, position: np.ndarray) -> float: 
         """Compute potential energy at given position."""
         pass
+
+    def potential(self, position: np.ndarray) -> float: 
+        """
+        Wrapper for potential calls. 
+        
+        DO NOT EDIT: Users should implement _potential()
+        """
+        self.energy_calls += 1
+        return self._potential(position)
         
     @abstractmethod
     def default_starting_position(self) -> np.ndarray:
         """Return default starting position for this PES."""
         pass
-        
-    def gradient(self, position) -> np.ndarray:
+    
+    def _gradient(self, position) -> np.ndarray:
         """Compute analytic gradient at given position, if available
         Raise NotImplementedError if not implemented.
         
@@ -26,6 +40,18 @@ class PotentialEnergySurface(ABC):
         from your implementation, and the ABC will perform finite-difference.
         """
         raise NotImplementedError("Analytic gradient not implemented for this PES.")
+    
+    def gradient(self, position) -> np.ndarray:
+        """
+        Wrapper for _gradient with built-in force magnitude limiting
+        DO NOT EDIT: Users should implement _gradient() for analytical gradient calculation
+        """
+        if (norm := np.linalg.norm(grad := self._gradient(position))) > self.max_acceptable_force_mag: 
+            print(f"Warning: Gradient value of {grad} detected as likely unphysically large in magnitude; shrunk to magnitude {self.max_acceptable_force_mag}")
+            grad = self.max_acceptable_force_mag * grad / norm
+        
+        self.force_calls += 1
+        return grad       
 
     def plot_range(self) -> tuple:
         """Return plotting range for visualization."""
@@ -47,11 +73,11 @@ class PotentialEnergySurface(ABC):
 class DoubleWell1D(PotentialEnergySurface):
     """1D double well potential."""
     
-    def potential(self, x):
+    def _potential(self, x):
         """Compute double well potential with minima at x=-1 and x=1."""
         return 1/6 * (5 * (x**2 - 1))**2
     
-    def gradient(self, x):
+    def _gradient(self, x):
         return np.array([50/3 * x * (x**2-1)])
         
     def default_starting_position(self):
@@ -68,7 +94,7 @@ class DoubleWell1D(PotentialEnergySurface):
 
 class Complex1D(PotentialEnergySurface):
     
-    def potential(self, x):
+    def _potential(self, x):
         a=[6.5, 4.2, -7.3, -125]
         b=[2.5, 4.3, 1.5, 0.036]
         c=[9.7, 1.9, -2.5, 12]
@@ -109,6 +135,7 @@ class StandardMullerBrown2D(PotentialEnergySurface):
     """2D Muller-Brown potential."""
 
     def __init__(self):
+        super().__init__()
         self.A = np.array([-200, -100, -170, 15])
         self.a = np.array([-1, -1, -6.5, 0.7])
         self.b = np.array([0, 0, 11, 0.6])
@@ -116,7 +143,7 @@ class StandardMullerBrown2D(PotentialEnergySurface):
         self.x0 = np.array([1, 0, -0.5, -1])
         self.y0 = np.array([0, 0.5, 1.5, 1])
 
-    def potential(self, pos):
+    def _potential(self, pos):
         """Compute the Muller-Brown potential with numerical safeguards."""
         x, y = pos[0], pos[1]
 
@@ -129,7 +156,7 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             V += self.A[i] * np.exp(exponent)
         return V
 
-    def gradient(self, position):
+    def _gradient(self, position):
         x, y = position[0], position[1]
 
         dVdx = 0.0
@@ -143,11 +170,7 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             dVdx += self.A[i] * exp_term * (2*self.a[i]*dx + self.b[i]*dy)
             dVdy += self.A[i] * exp_term * (self.b[i]*dx + 2*self.c[i]*dy)
         
-        grad = np.array([dVdx, dVdy])
-        if (norm := np.linalg.norm(grad)) > 500.: 
-            print(f"Warning: Gradient value of {grad} detected as likely unphysically large in magnitude; shrunk to magnitude 500")
-            grad = 500 * grad / norm  
-            
+        grad = np.array([dVdx, dVdy])            
         return grad 
 
     def default_starting_position(self):
@@ -177,20 +200,20 @@ from ase.calculators.lj import LennardJones
 class ASEPotentialEnergySurface(PotentialEnergySurface):
     """
     A base class for PES implementations that use ASE calculators.
-    This helps bridge your abstract PES to ASE's capabilities.
     """
     def __init__(self, ase_atoms, calculator):
+        super().__init__()
         self.atoms = ase_atoms
         self.atoms.set_calculator(calculator)
 
-    def potential(self, position):
+    def _potential(self, position):
         """Compute potential energy at given position using ASE."""
         # Ensure 'position' is a numpy array of correct shape for ASE
         # For N atoms, it should be (N, 3)
         self.atoms.set_positions(position.reshape(-1, 3))
         return self.atoms.get_potential_energy()
 
-    def gradient(self, position):
+    def _gradient(self, position):
         """Compute gradient at given position using ASE."""
         self.atoms.set_positions(position.reshape(-1, 3))
         # ASE returns forces, which are negative gradients
@@ -200,6 +223,7 @@ class ASEPotentialEnergySurface(PotentialEnergySurface):
 
 class LennardJonesCluster(ASEPotentialEnergySurface):
     def __init__(self, num_atoms, initial_positions=None):
+        super.__init__()
         # Create an ASE Atoms object for LJ atoms
         # 'X' for generic LJ particles
         symbols = ['X'] * num_atoms

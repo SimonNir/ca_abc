@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import minimize
 from storage import ABCStorage 
 from bias import GaussianBias
+from optimizer import ScipyOptimizer, ASEOptimizer
 
 __author__ = "Simon Nirenberg"
 __email__ = "simon_nirenberg@brown.edu"
@@ -41,10 +42,11 @@ class SmartABC:
         curvature_bias_covariance_scale=None,
         
         # Descent and optimization
-        optimizer="L-BFGS-B",
+        optimizer = None, 
         descent_convergence_threshold=1e-5,
         max_descent_steps=20,
         max_descent_step_size=1.0,
+        max_acceptable_force_mag = 500.
     ):
         """
         Initialize the SmartABC sampler.
@@ -81,10 +83,14 @@ class SmartABC:
         self.curvature_bias_height_scale = curvature_bias_height_scale or 1.0
         self.curvature_bias_covariance_scale = curvature_bias_covariance_scale or 1.0
         
+        if optimizer is None:
+            optimizer = ScipyOptimizer(self)
         self.optimizer = optimizer
         self.descent_convergence_threshold = descent_convergence_threshold
         self.max_descent_steps = max_descent_steps
         self.max_descent_step_size = max_descent_step_size
+        self.max_acceptable_force_mag = max_acceptable_force_mag
+        self.potential.max_acceptable_force_mag = max_acceptable_force_mag
         
         # Automatically validate user input to minimize chance of conflicts later
         self.validate_config()
@@ -117,8 +123,6 @@ class SmartABC:
 
         self.current_iteration = 0
         self.iter_periods = [] 
-        self.total_force_calls = 0 
-        self.total_energy_calls = 0
 
     @property
     def dimension(self):
@@ -178,7 +182,6 @@ class SmartABC:
         for bias in self.bias_list:
             V += bias.potential(position)
         
-        self.total_energy_calls += 1
         return V
 
     def compute_biased_force(self, position, unbiased: np.ndarray = None, eps=1e-5) -> np.ndarray:
@@ -187,22 +190,25 @@ class SmartABC:
             total_grad = - unbiased.copy()
             for bias in self.bias_list:
                 total_grad += bias.gradient(position)
-            force = -total_grad
+            force = -total_grad     
+            
         else: 
-            # Fall back to finite difference
-            force = np.zeros_like(position)
-            for i in range(len(position)):
-                pos_plus = position.copy()
-                pos_minus = position.copy()
-                pos_plus[i] += eps
-                pos_minus[i] -= eps
-                force[i] = -(self.compute_biased_potential(pos_plus).item() - self.compute_biased_potential(pos_minus).item()) / (2 * eps)
+            try:
+                unbiased = - self.potential.gradient(position)
+            except NotImplementedError:          
+                # Fall back to finite difference
+                force = np.zeros_like(position)
+                for i in range(len(position)):
+                    pos_plus = position.copy()
+                    pos_minus = position.copy()
+                    pos_plus[i] += eps
+                    pos_minus[i] -= eps
+                    force[i] = -(self.compute_biased_potential(pos_plus).item() - self.compute_biased_potential(pos_minus).item()) / (2 * eps)
 
-        self.total_force_calls += 1
-        if (norm := np.linalg.norm(force)) > 500.: 
-            print(f"Warning: Force value of {force} detected as likely unphysically large in magnitude; shrunk to magnitude 500")
-            force = 500 * force / norm
-            print(force)    
+        if (norm := np.linalg.norm(force)) > self.max_acceptable_force_mag: 
+            print(f"Warning: Force value of {force} detected as likely unphysically large in magnitude; shrunk to magnitude {self.max_acceptable_force_mag}")
+            force = self.max_acceptable_force_mag * force / norm
+            
         return force
 
     def deposit_bias(self, center: np.ndarray = None, covariance: float|np.ndarray = None, height: float = None):
@@ -248,67 +254,33 @@ class SmartABC:
         max_steps = max_steps or self.max_descent_steps
         convergence_threshold = convergence_threshold or self.descent_convergence_threshold
 
-        # Record initial state
-        initial_pos = self.position.copy()
-        self._record_state(initial_pos)
+        result, traj_data = self.optimizer.descend(self.position, max_steps=self.max_descent_steps, convergence_threshold=self.descent_convergence_threshold)
+        final_pos = result['x']
+        converged = result['converged']
+        hess_inv = result['hess_inv'] if 'hess_inv' in result else None
+        traj, unbiased_e, biased_e, unbiased_f, biased_f = traj_data 
 
-        # Create wrapped functions that record state automatically
-        def wrapped_potential(x):
-            # Only record if this is a new position
-            # if len(self.trajectory) == 0 or not np.allclose(x, self.trajectory[-1]):
-            #     self._record_state(x.copy())
-            return self.compute_biased_potential(x)
+        self.trajectory.extend(traj)
+        self.unbiased_energies.extend(unbiased_e)
+        self.biased_energies.extend(biased_e)
+        self.unbiased_forces.extend(unbiased_f)
+        self.biased_forces.extend(biased_f)
 
-        def wrapped_force(x):
-            # The potential wrapper handles recording, we just need to compute the force
-            return -self.compute_biased_force(x)  # Negative because scipy expects gradient
-
-        # Run optimization with wrapped functions
-        result = minimize(
-            wrapped_potential,
-            self.position,
-            method=self.optimizer,
-            jac=wrapped_force,
-            tol=convergence_threshold,
-            options={'maxiter': max_steps, 'disp': False}, 
-            callback=self._record_state
-        )
-
-        # Ensure final state is recorded (in case optimizer didn't call our wrapper)
-        final_pos = result.x.copy()
-        if len(self.trajectory) == 0 or not np.allclose(self.trajectory[-1], final_pos):
-            self._record_state(final_pos)
+        # # Ensure final state is recorded (in case optimizer didn't call our wrapper)
+        # final_pos = result.x.copy()
+        # if len(self.trajectory) == 0 or not np.allclose(self.trajectory[-1], final_pos):
+        #     self._record_state(final_pos)
 
         # Process curvature and check minimum (same as before)
-        self._process_curvature_info(result, final_pos)
-        self._check_minimum(result, final_pos, convergence_threshold)
+        self._process_curvature_info(final_pos, hess_inv)
+        self._check_minimum(converged, final_pos, convergence_threshold)
 
         self.position = final_pos.copy()
-        return result.success
-
-    def _record_state(self, position):
-        """Record all state information for a position, computing each quantity exactly once."""
-        # Record position
-        self.trajectory.append(position.copy())
-        
-        # Compute and store energies
-        unbiased_energy = self.potential.potential(position)
-        self.unbiased_energies.append(unbiased_energy)
-        biased_energy = self.compute_biased_potential(position, unbiased_energy)
-        self.biased_energies.append(biased_energy)
-        
-        # Compute and store forces
-        try:
-            unbiased_force = -self.potential.gradient(position)
-        except NotImplementedError:
-            unbiased_force = None
-        self.unbiased_forces.append(unbiased_force)
-        self.biased_forces.append(self.compute_biased_force(position, unbiased_force))
-        self.total_force_calls += 1
+        return converged
 
     # Curvature util
 
-    def _process_curvature_info(self, result, final_pos):
+    def _process_curvature_info(self, final_pos, hess_inv=None):
         """Process curvature information from optimization result."""
         if self.curvature_method == "full_hessian":
             self.most_recent_hessian = self.compute_hessian_finite_difference(
@@ -316,18 +288,20 @@ class SmartABC:
                 f0_already_computed=True
             )
 
-        if hasattr(result, 'hess_inv') and self.curvature_method.lower() == "bfgs":
-            if self.optimizer.lower() == "bfgs":
-                self.most_recent_inv_hessian = result.hess_inv
-            elif self.optimizer.lower() == "l-bfgs-b": 
-                self.store_l_bfgs_hess_inv(result.hess_inv)
+        if hess_inv is not None:
+            self.most_recent_inv_hessian = hess_inv
 
-    def _check_minimum(self, result, final_pos, threshold):
+    def _check_minimum(self, converged, final_pos, threshold):
         """Check if the final position is a minimum."""
-        if result.success:
-            unbiased_force = self.biased_forces[-1].copy()
-            for bias in self.bias_list:
-                unbiased_force -= (-bias.gradient(final_pos))
+        if converged:
+            # print(len(self.biased_energies))
+            # print(len(self.biased_forces))
+            if self.unbiased_forces[-1] is None:
+                unbiased_force = self.biased_forces[-1].copy()
+                for bias in self.bias_list:
+                    unbiased_force -= (-bias.gradient(final_pos))
+            else:
+                unbiased_force = self.unbiased_forces[-1]
                 
             if np.isclose(np.linalg.norm(unbiased_force), 0, threshold):
                 if self.most_recent_hessian is not None: 
@@ -460,17 +434,6 @@ class SmartABC:
 
         return direction, curvature
     
-    from scipy.sparse.linalg import LinearOperator
-    def store_l_bfgs_hess_inv(self, hess_inv: LinearOperator): 
-        n = self.dimension
-        I = np.eye(n)
-
-        inv_H = np.column_stack([hess_inv @ I[:, i] for i in range(n)])
-
-        # Symmetrize
-        inv_H = 0.5 * (inv_H + inv_H.T)
-
-        self.most_recent_inv_hessian = inv_H
     
     def estimate_extreme_hessian_modes(self, position, n_min, n_max): 
         """
@@ -560,7 +523,7 @@ class SmartABC:
         """Helper to record perturbation results."""
         if message is not None:
             print(message)
-        self._record_state(self.position)
+        # self._record_state(self.position)
         # self.trajectory.append(self.position.copy())
         # self.biased_forces.append(self.compute_biased_force(self.position))
         # self.biased_energies.append(self.compute_biased_potential(self.position))
@@ -613,8 +576,8 @@ class SmartABC:
               f"Identified minima: {self.minima},\n"
               f"On-the-fly-identified saddle-points (usually none: should find in post-processing with analyzer): {self.saddles}\n"
               f"Cached memory stats (use analyzer for dumped data):\n"
-              f"\tTotal energy calls: {self.total_energy_calls}\n"
-              f"\tTotal force calls: {self.total_force_calls}\n"
+              f"\tTotal energy calls: {self.potential.energy_calls}\n"
+              f"\tTotal force calls: {self.potential.force_calls}\n"
               f"\tTotal steps: {len(self.trajectory)}")
 
     # Analysis and visualization
@@ -671,7 +634,7 @@ def run_1d_simulation():
         default_bias_height=1,
         default_bias_covariance=0.3,
         default_perturbation_size=0.05,
-        optimizer="CG",
+        optimizer=None, 
         run_mode="compromise",
         perturb_type="random",
         bias_type="constant",
@@ -704,7 +667,7 @@ def run_2d_simulation():
         potential=potential,
         expected_barrier_height=30,  # Adjusted for Muller-Brown potential
         starting_position=[0.0, 0.0],
-        optimizer="CG",
+        optimizer=None,
         perturb_type="random",
         bias_type="constant",
         curvature_method="ignore",

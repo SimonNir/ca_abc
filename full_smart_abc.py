@@ -10,35 +10,36 @@ __email__ = "simon_nirenberg@brown.edu"
 class SmartABC:
     """
     Autonomous Basin Climbing (ABC) algorithm with smart perturbation and biasing strategies.
-    This class has all the functionality of TraditionalABC and much more.   
-
-    For now, everything is set to use BFGS 
+    This class has all the functionaly of TraditionalABC and much more. 
     """
 
     def __init__(
         self,
         potential,
+        expected_barrier_height=1,
         # Optional parameters organized by category
         # Setup parameters
+        run_mode="compromise",
         starting_position=None,
         dump_every = 500, # Iters between data dumps
         dump_folder = "abc_data_dumps", 
 
         # Curvature estimation
-        curvature_method="bfgs",
+        curvature_method="full_hessian",
         
         # Perturbation strategy
-        perturb_type="adaptive",
+        perturb_type="dynamic",
+        perturb_dist="normal",
         scale_perturb_by_curvature=True,
         default_perturbation_size=0.05,
-        random_perturb_every = 8, 
+        large_perturbation_scale_factor=5,
         
         # Biasing strategy
-        bias_type="adaptive",
-        default_bias_height=1.0,
-        default_bias_covariance=1.0,
-        curvature_bias_height_scale=1.0, 
-        curvature_bias_covariance_scale=1.0, 
+        bias_type="smart",
+        default_bias_height=None,
+        default_bias_covariance=None,
+        curvature_bias_height_scale=None,
+        curvature_bias_covariance_scale=None,
         
         # Descent and optimization
         descent_convergence_threshold=1e-5,
@@ -56,8 +57,10 @@ class SmartABC:
             See README.md for full documentation of optional parameters.
         """
         self.potential = potential
+        self.expected_barrier_height = expected_barrier_height
         
         # Set up configuration parameters
+        self.run_mode = run_mode
         self.curvature_method = curvature_method
 
         self.dump_every = dump_every
@@ -66,22 +69,18 @@ class SmartABC:
             self.storage = ABCStorage(dump_folder, dump_every) 
         else: 
             self.storage = None 
-
-         # Initialize state variables
-        self.reset(starting_position)
         
         self.perturb_type = perturb_type
+        self.perturb_dist = perturb_dist
         self.scale_perturb_by_curvature = scale_perturb_by_curvature
         self.default_perturbation_size = default_perturbation_size
-        self.random_perturb_every = random_perturb_every    
-    
+        self.large_perturbation_scale_factor = large_perturbation_scale_factor
+        
         self.bias_type = bias_type
-        self.default_bias_height = default_bias_height 
-        if np.isscalar(default_bias_covariance): 
-            default_bias_covariance = np.eye(self.dimension) * default_bias_covariance
-        self.default_bias_covariance = np.atleast_2d(default_bias_covariance)
-        self.curvature_bias_height_scale = curvature_bias_height_scale
-        self.curvature_bias_covariance_scale = curvature_bias_covariance_scale
+        self.default_bias_height = default_bias_height or expected_barrier_height
+        self.default_bias_covariance = default_bias_covariance or 1.0
+        self.curvature_bias_height_scale = curvature_bias_height_scale or 1.0
+        self.curvature_bias_covariance_scale = curvature_bias_covariance_scale or 1.0
         
         self.descent_convergence_threshold = descent_convergence_threshold
         self.max_descent_steps = max_descent_steps
@@ -92,6 +91,9 @@ class SmartABC:
         
         # Automatically validate user input to minimize chance of conflicts later
         self.validate_config()
+
+        # Initialize state variables
+        self.reset(starting_position)
 
     def reset(self, starting_position=None, clean_dir=False):
         """Reset the sampler to initial state."""
@@ -110,7 +112,7 @@ class SmartABC:
         self.minima = []
         self.saddles = []
 
-        self.dimension = len(self.position)
+        self._dimension = len(self.position)
 
         self.prev_mode = None
         self.most_recent_hessian = None
@@ -121,6 +123,10 @@ class SmartABC:
 
         if clean_dir:
             self.storage.clean_dir()
+
+    @property
+    def dimension(self):
+        return self._dimension
     
     def validate_config(self):
         """Validate configuration parameters."""
@@ -242,25 +248,17 @@ class SmartABC:
             if covariance is None:
                 cov = self.default_bias_covariance
 
-        height = np.clip(height, self.default_bias_height/2, self.default_bias_height*2)
-        # 1. Get eigenvalues/vectors - ensure proper matrix shapes
-        eigvals, eigvecs = np.linalg.eigh(cov)  # Use built-in SVD for stability
+        height = np.clip(height, self.default_bias_height/10, self.default_bias_height*10)
 
-        # 2. Clip eigenvalues properly
-        min_variance = np.min(np.diag(self.default_bias_covariance)) / 2
-        max_variance = np.max(np.diag(self.default_bias_covariance)) * 2
-        eigvals = np.clip(eigvals, min_variance, max_variance)
+        eigvecs, eigvals = zip(*self.conjugate_directions(cov))
+        eigvecs = np.array(eigvecs).T  # Convert to 2D array, columns are eigenvectors
 
-        # 3. Reconstruct with dimension guarantees
-        n = len(eigvals)
-        cov_reconstructed = eigvecs @ np.diag(eigvals) @ eigvecs.T
+        min_variance = self.default_bias_covariance / 2
+        max_variance = self.default_bias_covariance * 2
+        eigvals = np.clip(np.array(eigvals), min_variance, max_variance)
 
-        # 4. Force symmetry (numerical stability)
-        cov_reconstructed = 0.5 * (cov_reconstructed + cov_reconstructed.T)
-
-        # Verification
-        assert cov_reconstructed.shape == (n, n), "Matrix not square"
-        assert np.allclose(cov_reconstructed, cov_reconstructed.T), "Not symmetric"      
+        # Reconstruct the covariance matrix from eigenvectors and clipped eigenvalues
+        cov = eigvecs @ np.diag(eigvals) @ eigvecs.T
 
         bias = GaussianBias(
             center=pos,
@@ -566,11 +564,11 @@ class SmartABC:
 
     # Perturbation and climbing
 
-    def perturb(self, scale=None, mode="adaptive"):
+    def perturb(self, scale=None, mode="softmode"):
         """
         Perturb current position using selected strategy.
         
-        If mode == random or mode == adaptive and criterion fulfilled:
+        If mode == random or mode == dynamic and criterion fulfilled:
         random
         else:
         if fill_hessian available, compute its softest direction and perturb along it; otherwise, use rayleigh estimate for now 
@@ -604,6 +602,10 @@ class SmartABC:
         self.position += noise
         print(f"Randomly perturbed,")
 
+    def suspected_climbing_too_long(self):
+        # TODO: Implement
+        return False 
+
     # Simulation control
     
     def run(self, optimizer=None, max_iterations=100, verbose=True, **kwargs):
@@ -634,13 +636,9 @@ class SmartABC:
             # Compute Hessian if needed for smart biasing/perturbation
             if self.curvature_method == "full_hessian":
                 self.most_recent_hessian = self.compute_hessian_finite_difference(self.position)
-            
                                
             # Perturbation
-            if self.current_iteration % self.random_perturb_every == 0: 
-                self.perturb(mode="random")
-            else:
-                self.perturb(mode=self.perturb_type)
+            self.perturb(mode=self.perturb_type)
 
             # Deposit bias
             self.deposit_bias(pos)
@@ -673,12 +671,9 @@ class SmartABC:
         
     def get_bias_centers(self):
         return np.array([bias.center for bias in self.bias_list])
-    
+        
     def compute_free_energy_surface(self, resolution=100):
-        """
-        Compute free energy surface on grid for visualization.
-        Eventually, move this to analysis
-        """
+        """Compute free energy surface on grid for visualization."""
         if self.dimension == 1:
             x_range = self.potential.plot_range()
             x = np.linspace(x_range[0], x_range[1], resolution)

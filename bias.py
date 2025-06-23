@@ -19,16 +19,17 @@ class GaussianBias:
     def __init__(self, center, covariance, height):
         self.center = np.atleast_1d(center)
         self.height = height
+        print(covariance)
         
         # Handle scalar covariance input
         if np.isscalar(covariance):
-            self.covariance = np.eye(len(center)) * covariance**2
+            self.covariance = np.eye(len(center)) * covariance
         else:
             self.covariance = np.atleast_2d(covariance)
         
         # Validate covariance matrix
         if self.covariance.shape[0] != self.covariance.shape[1]:
-            raise ValueError("Covariance matrix must be square")
+            raise ValueError(f"Covariance matrix must be square. Currently:\n{self.covariance}")
         if self.covariance.shape[0] != self.center.shape[0]:
             raise ValueError("Covariance matrix dimension must match center dimension")
         

@@ -185,3 +185,10 @@ class ABCStorage:
         last_file = files[-1]
         with h5py.File(last_file, 'r') as f:
             return f.attrs['iter_end']
+        
+    def clean_dir(self):
+        """Delete all data files in the run directory (including biases and landmarks)."""
+        for fname in os.listdir(self.run_dir):
+            file_path = os.path.join(self.run_dir, fname)
+            if os.path.isfile(file_path):
+                os.remove(file_path)

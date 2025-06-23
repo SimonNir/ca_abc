@@ -188,13 +188,13 @@ class ABCAnalysis:
             ax1.plot(x, self.abc.potential.potential(x), 'k-', label='Original Potential')
             ax1.plot(x, F_orig, 'b-', alpha=0.7, label='Biased Potential')
         
-        # Mark minima and saddles
-        if hasattr(self.abc, 'minima'):
-            for i, min_pos in enumerate(self.abc.minima):
-                ax1.axvline(min_pos[0], color='g', linestyle='--', alpha=0.5, label='Minima' if i == 0 else None)
-        if hasattr(self.abc, 'saddles'):
-            for i, sad_pos in enumerate(self.abc.saddles):
-                ax1.axvline(sad_pos[0], color='orange', linestyle=':', alpha=0.5, label='Saddles' if i == 0 else None)
+        # # Mark minima and saddles
+        # if hasattr(self.abc, 'minima'):
+        #     for i, min_pos in enumerate(self.abc.minima):
+        #         ax1.axvline(min_pos[0], color='g', linestyle='--', alpha=0.5, label='Minima' if i == 0 else None)
+        # if hasattr(self.abc, 'saddles'):
+        #     for i, sad_pos in enumerate(self.abc.saddles):
+        #         ax1.axvline(sad_pos[0], color='orange', linestyle=':', alpha=0.5, label='Saddles' if i == 0 else None)
         # Mark biases in red
         if hasattr(self.abc, 'bias_list') and self.abc.bias_list:
             for i, bias in enumerate(self.abc.bias_list):
@@ -257,19 +257,24 @@ class ABCAnalysis:
             contour1 = ax1.contour(X, Y, Z_orig, levels=levels, colors='black', alpha=0.6)
             ax1.clabel(contour1, inline=True, fontsize=8)
         
+        
         # Mark minima and saddles
-        if hasattr(self.abc, 'minima'):
-            ax1.scatter([m[0] for m in self.abc.minima], [m[1] for m in self.abc.minima],
-                       c='g', marker='o', s=50, label='Minima')
-        if hasattr(self.abc, 'saddles'):
-            ax1.scatter([s[0] for s in self.abc.saddles], [s[1] for s in self.abc.saddles],
-                       c='r', marker='x', s=50, label='Saddles')
+        try: 
+            if (minima := self.abc.potential.known_minima()) is not None:
+                ax1.scatter([m[0] for m in minima], [m[1] for m in minima],
+                        c='g', marker='o', s=50, label='Minima')
+            if (saddles := self.abc.potential.known_saddles()) is not None: 
+                ax1.scatter([s[0] for s in saddles], [s[1] for s in saddles],
+                        c='purple', marker='o', s=50, label='Saddles')
+        except e:
+            print("No valid attached PES: skipping known minima and saddle plotting.")
+
         
         ax1.set_title('Original Potential')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         
-        # Plot 2: Biased potential with bias centers
+        # Plot 2: Biased potential with bias centers and found minima and saddles
         if not self.from_storage and hasattr(self.abc, 'compute_free_energy_surface'):
             (X_bias, Y_bias), Z_bias = self.abc.compute_free_energy_surface()
             contour2 = ax2.contour(X_bias, Y_bias, Z_bias, levels=self._log_levels(Z_orig, 50), 
@@ -281,6 +286,13 @@ class ABCAnalysis:
             ax2.scatter([c[0] for c in bias_centers], [c[1] for c in bias_centers],
                        c='red', s=50, marker='x', label='Bias Centers')
             ax2.legend()
+
+        if hasattr(self.abc, 'minima'):
+            ax1.scatter([m[0] for m in self.abc.minima], [m[1] for m in self.abc.minima],
+                       c='g', marker='o', s=50, label='Minima')
+        if hasattr(self.abc, 'saddles'):
+            ax1.scatter([s[0] for s in self.abc.saddles], [s[1] for s in self.abc.saddles],
+                       c='purple', marker='o', s=50, label='Saddles')
         
         ax2.set_title('Biased Potential Surface')
         ax2.grid(True, alpha=0.3)
@@ -301,13 +313,13 @@ class ABCAnalysis:
                 bias_steps = self.get_bias_steps()
                 if bias_steps.size > 0:
                     bias_pos = np.array(trajectory)[bias_steps]
-                    ax3.scatter(bias_pos[:,0], bias_pos[:,1], c='red', s=50, 
+                    ax3.scatter(bias_pos[:,0], bias_pos[:,1], c='red', s=20, 
                                marker='x', label='Biases', zorder=5)
             if plot_type in ['perturbations', 'both']:
                 pert_steps = self.get_perturbation_steps()
                 if pert_steps.size > 0:
                     pert_pos = np.array(trajectory)[pert_steps]
-                    ax3.scatter(pert_pos[:,0], pert_pos[:,1], c='blue', s=50, 
+                    ax3.scatter(pert_pos[:,0], pert_pos[:,1], c='blue', s=20, 
                                marker='o', label='Perturbations', zorder=5)
             
             ax3.set_title('ABC Trajectory')
@@ -326,80 +338,96 @@ class ABCAnalysis:
         plt.show()
 
     def plot_diagnostics(self, filename=None, save_plots=False, plot_type='both'):
-        """Generate diagnostic plots (force, energy, barriers)"""
-        fig, axes = plt.subplots(3, 1, figsize=(10, 12))                
+        """Generate diagnostic plots (force, energy, barriers, exploration metrics)"""
+        fig = plt.figure(figsize=(12, 12))
+        gs = fig.add_gridspec(2, 2)  # 2 rows, 2 columns
         
-        # Plot 1: Force magnitude
+        # Create subplots in the grid
+        ax0 = fig.add_subplot(gs[0, 0])  # Top left - Force
+        ax1 = fig.add_subplot(gs[0, 1])  # Top right - Energy
+        ax2 = fig.add_subplot(gs[1, 0])  # Bottom left - Exploration
+        ax3 = fig.add_subplot(gs[1, 1])  # Bottom right - Barriers
+        
+        # Plot 1: Force magnitude (top left)
         biased_forces = self.get_forces(biased=True)
         if len(biased_forces) > 0:
             biased_mags = np.linalg.norm(biased_forces, axis=1) if biased_forces.ndim > 1 else np.abs(biased_forces)
-            axes[0].plot(biased_mags, 'c-', alpha=0.7, label='Biased Force')
+            ax0.plot(biased_mags, 'c-', alpha=0.7, label='Biased Force')
 
         forces = self.get_forces(biased=False)
         if len(forces) > 0 and forces[0] is not None:
             force_mags = np.linalg.norm(forces, axis=1) if forces.ndim > 1 else np.abs(forces)
-            axes[0].plot(force_mags, 'b-', label='Unbiased Force')
+            ax0.plot(force_mags, 'b-', label='Unbiased Force')
         
-        axes[0].set_title('Force Magnitude Over Time')
-        axes[0].set_ylabel('|Force|')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
+        ax0.set_title('Force Magnitude Over Time')
+        ax0.set_ylabel('|Force|')
+        ax0.legend()
+        ax0.grid(True, alpha=0.3)
         
-        # Plot 2: Energy diagnostics
+        # Plot 2: Energy diagnostics (top right)
         energies = self.get_energies(biased=False)
         if len(energies) > 0:
-            axes[1].plot(energies, color='orange', label='Unbiased PES')
+            ax1.plot(energies, color='orange', label='Unbiased PES')
             
             biased_energies = self.get_energies(biased=True)
             if len(biased_energies) > 0:
-                axes[1].plot(biased_energies, color='blue', alpha=0.5, label='Biased PES')
+                ax1.plot(biased_energies, color='blue', alpha=0.5, label='Biased PES')
         
-        axes[1].set_title('Energy Profile')
-        axes[1].set_xlabel('Time Step')
-        axes[1].set_ylabel('Energy')
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
+        ax1.set_title('Energy Profile')
+        ax1.set_xlabel('Time Step')
+        ax1.set_ylabel('Energy')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
 
         # Mark biases and perturbations
         if plot_type in ['biases', 'both']:
             bias_steps = self.get_bias_steps()
             if bias_steps.size > 0 and len(biased_mags) > 0:
-                axes[0].scatter(bias_steps, biased_mags[bias_steps], c='red', s=30, label='Biases')
+                ax0.scatter(bias_steps, biased_mags[bias_steps], c='red', s=30, label='Biases')
             if bias_steps.size > 0 and len(energies) > 0:
-                axes[1].scatter(bias_steps, energies[bias_steps], c='red', s=30, label='Biases')
+                ax1.scatter(bias_steps, energies[bias_steps], c='red', s=30, label='Biases')
         
         if plot_type in ['perturbations', 'both']:
             pert_steps = self.get_perturbation_steps()
             if pert_steps.size > 0 and len(forces) > 0:
-                axes[0].scatter(pert_steps, biased_mags[pert_steps], c='blue', s=30, label='Perturbations')
+                ax0.scatter(pert_steps, biased_mags[pert_steps], c='blue', s=30, label='Perturbations')
             if pert_steps.size > 0 and len(energies) > 0:
-                axes[1].scatter(pert_steps, energies[pert_steps], c='blue', s=30, label='Perturbations')
+                ax1.scatter(pert_steps, energies[pert_steps], c='blue', s=30, label='Perturbations')
         
-        # Plot 3: Barrier heights between minima
-        if hasattr(self.abc, 'minima') and len(self.abc.minima) > 1 and len(energies) > 0:
-            minima_indices = [
-                np.argmin(np.linalg.norm(self.get_trajectory() - min_pos, axis=1))
-                for min_pos in self.abc.minima
-            ]
+        # Plot 3: Exploration metrics (bottom left)
+        self._plot_exploration_metrics(ax2)
+        
+        # Plot 4: Barrier heights between minima (bottom right)
+        ax3.set_title('Barrier Heights Between Minima')
+        ax3.set_ylabel('Energy')
+        ax3.grid(True, alpha=0.3)
+        
+        if (hasattr(self.abc, 'minima') and len(self.abc.minima) > 1 and 
+            len(energies) > 0 and hasattr(self, 'get_trajectory')):
             
-            barriers = []
-            labels = []
-            for i in range(len(minima_indices)-1):
-                start, end = minima_indices[i], minima_indices[i+1]
-                max_energy = np.max(energies[start:end])
-                barrier = max_energy - min(energies[start], energies[end])
-                barriers.append(barrier)
-                labels.append(f'{i}→{i+1}')
-            
-            if barriers:
-                axes[2].bar(labels, barriers)
-                axes[2].set_title('Barrier Heights Between Minima')
-                axes[2].set_ylabel('Energy')
-                axes[2].grid(True, alpha=0.3)
-            else:
-                axes[2].text(0.5, 0.5, 'No barrier data', ha='center', va='center')
+            try:
+                minima_indices = [
+                    np.argmin(np.linalg.norm(self.get_trajectory() - min_pos, axis=1))
+                    for min_pos in self.abc.minima
+                ]
+                
+                barriers = []
+                labels = []
+                for i in range(len(minima_indices)-1):
+                    start, end = minima_indices[i], minima_indices[i+1]
+                    max_energy = np.max(energies[start:end])
+                    barrier = max_energy - min(energies[start], energies[end])
+                    barriers.append(barrier)
+                    labels.append(f'{i}→{i+1}')
+                
+                if barriers and len(barriers) == len(labels):
+                    ax3.bar(labels, barriers, width=0.6)
+                else:
+                    ax3.text(0.5, 0.5, 'No valid barriers found', ha='center', va='center')
+            except Exception as e:
+                ax3.text(0.5, 0.5, f'Error plotting barriers:\n{str(e)}', ha='center', va='center')
         else:
-            axes[2].text(0.5, 0.5, 'Not enough minima/energy data', ha='center', va='center')
+            ax3.text(0.5, 0.5, 'Not enough minima/energy data', ha='center', va='center')
         
         plt.tight_layout()
         self._save_plot(fig, filename, save_plots)
@@ -418,9 +446,10 @@ class ABCAnalysis:
                 variances.append(np.sum(np.var(trajectory[i:i+window_size], axis=0)))
             
             ax.plot(np.arange(window_size, len(trajectory)), variances, 
-                   'g-', label=f'Rolling Var (w={window_size})')
+                'g-', label=f'Rolling Var (w={window_size})')
             
             ax.set_title('Exploration Metrics')
+            ax.set_ylabel('Metric Value')
             ax.legend()
             ax.grid(True, alpha=0.3)
         else:

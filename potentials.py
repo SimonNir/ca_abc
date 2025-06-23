@@ -222,20 +222,19 @@ class ASEPotentialEnergySurface(PotentialEnergySurface):
 
 
 class LennardJonesCluster(ASEPotentialEnergySurface):
-    def __init__(self, num_atoms, initial_positions=None):
-        super.__init__()
+    def __init__(self, num_atoms, initial_positions=None, box_scale = 25):
         # Create an ASE Atoms object for LJ atoms
         # 'X' for generic LJ particles
         symbols = ['X'] * num_atoms
         
         if initial_positions is None:
             # Random initial positions (example)
-            initial_positions = np.random.rand(num_atoms, 3) * 5.0 
+            initial_positions = np.random.rand(num_atoms, 3) * box_scale
         
         atoms = Atoms(symbols=symbols, positions=initial_positions, pbc=False)
         
         # Attach the ASE LennardJones calculator
-        lj_calculator = LennardJones(epsilon=1.0, sigma=1.0, rc=2.5) # Example LJ parameters
+        lj_calculator = LennardJones(epsilon=1.0, sigma=1.0, smooth=False) # Example LJ parameters
         
         super().__init__(atoms, lj_calculator)
         self.num_atoms = num_atoms

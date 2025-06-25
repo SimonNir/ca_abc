@@ -1,4 +1,4 @@
-from smart_abc import SmartABC
+from ca_abc import CurvatureAdaptiveABC
 from optimizers import *
 from potentials import Complex1D, DoubleWell1D
 from analysis import ABCAnalysis
@@ -10,36 +10,65 @@ def run_1d_simulation():
     
     potential = Complex1D()
 
-    abc = SmartABC(
+     # abc = CurvatureAdaptiveABC.load_from_disk(potential,
+    #     curvature_method="None", 
+
+    #     perturb_type="random",
+    #     default_perturbation_size=0.01,
+     
+    #     bias_height_type="fixed",
+    #     default_bias_height=0.1,
+    #     min_bias_height= 0.05,
+    #     max_bias_height= 0.3,
+    #     curvature_bias_height_scale=10,
+
+    #     bias_covariance_type="fixed",
+    #     default_bias_covariance=0.001,
+    #     min_bias_covariance= 0.0005,
+    #     max_bias_covariance= 0.0015,
+    #     curvature_bias_covariance_scale=10,
+        
+    #     max_descent_steps=300, 
+    #     descent_convergence_threshold=1e-4
+    # )
+
+    abc = CurvatureAdaptiveABC(
         potential=potential,
         starting_position=[0.0],
-        default_bias_height=2,
-        default_bias_covariance=0.2,
-        default_perturbation_size=0.01,
-        perturb_type="random",
-        bias_type="smart",
-        expected_barrier_height=2,
+        curvature_method="finite_diff", 
+        dump_every=1000,
 
-        # curvature_bias_covariance_scale=1e-6,
-        curvature_method="full_hessian",
-        # curvature_method="estimate",
-        dump_folder=None, 
-        dump_every=0,
-        max_descent_steps=100,
-        descent_convergence_threshold=1e-5
+        perturb_type="fixed",
+        default_perturbation_size=0.05,
+        scale_perturb_by_curvature=False,
+     
+        bias_height_type="fixed",
+        default_bias_height=0.01,
+        min_bias_height= 0.05,
+        max_bias_height= 4,
+        curvature_bias_height_scale=0.03,
+
+        bias_covariance_type="fixed",
+        default_bias_covariance=0.01,
+        min_bias_covariance= 0.01/10,
+        max_bias_covariance= 0.01*20,
+        curvature_bias_covariance_scale=1/6,
+        
+        max_descent_steps=100, 
+        descent_convergence_threshold=1e-4
     )
-    
-    opt = ScipyOptimizer(abc, method="BFGS")
-    # opt = ScipyOptimizer(abc, method='trust-krylov', initial_trust_radius=1., max_trust_radius=1000)
-    # opt = ASEOptimizer(abc, optimizer_class="FIRE")
-    # opt = ConservativeSteepestDescent(abc)
 
-    abc.run(max_iterations=30, optimizer=opt, verbose=True)
+    # myopt = SimpleGradientDescent(abc, step_size=0.01)
+    myopt = ScipyOptimizer(abc, method="BFGS")
+    abc.run(max_iterations=3000, optimizer=myopt, verbose=True)
         
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
-    analyzer.plot_summary(save_plots=False, filename="1d_smart_abc.png")
-    # analyzer.plot_diagnostics(save_plots=False, filename="1d_smart_abc_diagnostics.png")
+    analyzer.plot_summary(save_plots=False, filename="1d_smart_abc.png", plot_type="neither")
+    analyzer.plot_diagnostics(save_plots=False, filename="1d_smart_abc_diagnostics.png")
+
+    analyzer.create_basin_filling_gif(fps=60, filename="traditional_abc.gif")
+
 
 def main():
     run_1d_simulation()

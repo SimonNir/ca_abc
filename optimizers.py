@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from copy import deepcopy
 
 class Optimizer(ABC):
     """Abstract base class for all optimizer backends"""
@@ -25,15 +26,14 @@ class Optimizer(ABC):
             
             # Your existing computation logic
             unbiased_energy = self.abc_sim.potential.potential(x)
-            biased_energy = self.abc_sim.compute_biased_potential(x, unbiased_energy) # reuse unbiased call from before
-            
+            biased_energy = self.abc_sim.compute_biased_potential(x, deepcopy(unbiased_energy)) # reuse unbiased call from before
+
             try:
                 unbiased_force = - self.abc_sim.potential.gradient(x)
             except NotImplementedError:
                 unbiased_force = None
-            
             biased_force = self.abc_sim.compute_biased_force(x, unbiased_force)
-            
+           
             # Record
             self.trajectory.append(x.copy())
             self.unbiased_energies.append(unbiased_energy)
@@ -41,7 +41,7 @@ class Optimizer(ABC):
             self.unbiased_forces.append(unbiased_force)
             self.biased_forces.append(biased_force)
         
-        return self.biased_energies[-1], -self.biased_forces[-1]  # (energy, -gradient)
+        return self.biased_energies[-1], -self.biased_forces[-1]  # (energy, gradient)
 
 
     def get_traj_data(self):
@@ -93,27 +93,27 @@ class Optimizer(ABC):
         Would be nicer if could get the indices, but many optimizer types (e.g. SciPy) do not allow for this
         """
         pass 
-    
+
 
 from scipy.optimize import minimize
-from scipy.optimize._hessian_update_strategy import BFGS
+from scipy.sparse.linalg import LinearOperator
+import numpy as np
 
 class ScipyOptimizer(Optimizer):
-    def __init__(self, abc_sim, method='L-BFGS-B', **kwargs):
+    def __init__(self, abc_sim, method='BFGS', **kwargs):
         """
-        Unified SciPy optimizer supporting:
-        - Quasi-Newton methods (L-BFGS-B, BFGS, etc.)
-        - Trust-region methods (trust-krylov, trust-ncg)
+        SciPy optimizer supporting BFGS, L-BFGS-B, and CG methods.
         
         Args:
-            method: Any SciPy method name
+            method: One of 'BFGS', 'L-BFGS-B', or 'CG'
             kwargs: Method-specific options
         """
         super().__init__(abc_sim)
+        if method not in ['BFGS', 'L-BFGS-B', 'CG']:
+            raise ValueError(f"Method '{method}' not supported. Choose from: BFGS, L-BFGS-B, CG")
         self.method = method
         self.optimizer_kwargs = kwargs
         self._result = None
-        self._hess_approx = BFGS() if method.startswith('trust-') else None
         self.accepted_steps = []
 
     def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
@@ -121,27 +121,9 @@ class ScipyOptimizer(Optimizer):
         self.accepted_steps = [x0.copy()]
         last_accepted_x = x0.copy()
         
-        # Common options
         options = self.optimizer_kwargs.copy()
         if max_steps is not None:
             options['maxiter'] = max_steps
-        if convergence_threshold is not None:
-            if self.method.startswith('trust-'):
-                options['gtol'] = convergence_threshold
-            else:
-                # For L-BFGS-B and similar methods
-                options['ftol'] = convergence_threshold
-
-        # Trust-region specific setup
-        if self.method.startswith('trust-'):
-            def hessp(x, p):
-                # Compute function value and gradient at x
-                _, grad = self._compute(x)
-                self._hess_approx.update(x, grad)
-                return self._hess_approx.dot(p)
-            extra_args = {'hessp': hessp}
-        else:
-            extra_args = {}
 
         def callback(x):
             nonlocal last_accepted_x
@@ -155,27 +137,24 @@ class ScipyOptimizer(Optimizer):
             x0=x0,
             method=self.method,
             jac=lambda x: self._compute(x)[1],
+            tol=convergence_threshold,
             callback=callback,
-            options=options,
-            **extra_args
+            options=options
         )
-
-        # Finalize Hessian approximation for trust-region
-        if self.method.startswith('trust-') and hasattr(self._result, 'grad'):
-            self._hess_approx.update(self._result.x, self._result.grad)
 
         return self._package_result()
     
-    from scipy.sparse.linalg import LinearOperator
-    def construct_l_bfgs_hess_inv(self, hess_inv: LinearOperator): 
+    def _construct_l_bfgs_hess_inv(self, hess_inv_operator: LinearOperator):
+        """Convert L-BFGS-B LinearOperator inverse Hessian to dense matrix"""
         n = self.abc_sim.dimension
         I = np.eye(n)
-
-        inv_H = np.column_stack([hess_inv @ I[:, i] for i in range(n)])
-
-        # Symmetrize
+        
+        # Apply the LinearOperator to each basis vector
+        inv_H = np.column_stack([hess_inv_operator.matvec(I[:, i]) for i in range(n)])
+        
+        # Symmetrize the result
         inv_H = 0.5 * (inv_H + inv_H.T)
-
+        
         return inv_H
 
     def _package_result(self):
@@ -187,23 +166,14 @@ class ScipyOptimizer(Optimizer):
             'message': self._result.message
         }
         
-        try:
-            if self.method.startswith('trust-'):
-                if self._hess_approx is not None:
-                    # Ensure we have a proper matrix
-                    hess_inv = self._hess_approx.get_matrix()
-                    # Make sure it's 2D
-                    if hess_inv.ndim == 1:
-                        hess_inv = np.diag(hess_inv)
-                    result['hess_inv'] = hess_inv
-            elif self.method.lower() == "bfgs":
-                if hasattr(self._result, 'hess_inv'):
-                    result['hess_inv'] = self._result.hess_inv 
-            elif self.method.lower() == "l-bfgs-b":
-                if hasattr(self._result, 'hess_inv'):
-                    result['hess_inv'] = self.construct_l_bfgs_hess_inv(self._result.hess_inv)
-        except Exception as e:
-            print(f"Warning: Could not extract Hessian information: {str(e)}")
+        # Handle Hessian information differently for each method
+        if hasattr(self._result, 'hess_inv'):
+            if self.method == 'BFGS':
+                # BFGS provides dense matrix directly
+                result['hess_inv'] = self._result.hess_inv
+            elif self.method == 'L-BFGS-B':
+                # L-BFGS-B needs conversion from LinearOperator
+                result['hess_inv'] = self._construct_l_bfgs_hess_inv(self._result.hess_inv)
         
         return result
 
@@ -212,9 +182,15 @@ class ScipyOptimizer(Optimizer):
 
     @property 
     def inv_hessian(self):
-        """Get inverse Hessian (only available for trust-region methods)"""
-        if self.method.startswith('trust-'):
-            return self._hess_approx.get_matrix()
+        """Get inverse Hessian approximation if available"""
+        if not hasattr(self, '_result'):
+            raise AttributeError("Optimization not yet run")
+        
+        if self.method == 'BFGS' and hasattr(self._result, 'hess_inv'):
+            return self._result.hess_inv
+        elif self.method == 'L-BFGS-B' and hasattr(self._result, 'hess_inv'):
+            return self._construct_l_bfgs_hess_inv(self._result.hess_inv)
+        
         raise AttributeError(f"Inverse Hessian not available for method '{self.method}'")
 
 
@@ -370,120 +346,108 @@ class _ASECalculatorWrapper:
             'forces': -padded_grad.reshape(-1, 3)  # Convert back to ASE format
         }
 
-
-class ConservativeSteepestDescent(Optimizer):
-    """Steepest descent optimizer that guarantees no overshooting of local minima"""
+class SimpleGradientDescent(Optimizer):
+    """The cheapest possible gradient descent optimizer"""
     
-    def __init__(self, abc_sim, initial_step_size=1.0, min_step_size=1e-10, 
-                 max_step_size=1.0, armijo_c1=1e-4, max_line_search_steps=20,
-                 friction_coeff=0.1, max_iter=1000, tol=1e-6):
+    def __init__(self, abc_sim, step_size=0.1):
         super().__init__(abc_sim)
-        self.initial_step_size = initial_step_size
-        self.min_step_size = min_step_size
-        self.max_step_size = max_step_size
-        self.armijo_c1 = armijo_c1
-        self.max_line_search_steps = max_line_search_steps
-        self.friction_coeff = friction_coeff
-        self.max_iter = max_iter
-        self.tol = tol
+        self.step_size = step_size
         self._accepted_positions = []
-        self._result = None
-        
+    
     def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
-        max_steps = max_steps if max_steps is not None else self.max_iter
-        convergence_threshold = convergence_threshold if convergence_threshold is not None else self.tol
-            
         x = x0.copy()
-        current_energy, negative_grad = self._compute(x)
         self._accepted_positions = [x.copy()]
-        step_size = self.initial_step_size
-        converged = False
-        message = 'Maximum number of iterations reached'
         
         for step in range(max_steps):
-            grad = -negative_grad
+            # Compute energy and forces (gradient is -force)
+            energy, gradient = self._compute(x)
             
             # Check convergence
-            grad_norm = np.linalg.norm(grad)
-            if grad_norm < convergence_threshold:
-                converged = True
-                message = f'Optimization converged (gradient norm {grad_norm:.2e} < {convergence_threshold:.2e})'
+            if np.linalg.norm(gradient) < convergence_threshold:
                 break
                 
-            direction = grad / (grad_norm if grad_norm > 0 else 1)
-            
-            # Perform conservative line search
-            new_x, new_energy, step_size = self._conservative_line_search(
-                x, current_energy, grad, direction, step_size
-            )
-            
-            # Apply friction to prevent oscillations
-            if len(self._accepted_positions) > 1:
-                prev_vec = self._accepted_positions[-1] - self._accepted_positions[-2]
-                curr_vec = new_x - self._accepted_positions[-1]
-                if np.dot(prev_vec, curr_vec) < 0:
-                    step_size *= (1 - self.friction_coeff)
-            
-            # Update for next iteration
-            x = new_x.copy()
-            current_energy = new_energy
-            _, negative_grad = self._compute(x)
+            # Take simple gradient descent step
+            x = x - self.step_size * gradient
             self._accepted_positions.append(x.copy())
             
-            if step_size < self.min_step_size:
-                message = 'Step size smaller than minimum allowed'
-                break
-                
-        # Store result as dictionary
-        self._result = {
+        return {
             'x': x,
-            'converged': converged,
-            'nit': step + 1,
-            'message': message,
-            'fun': current_energy
+            'energy': energy,
+            'gradient': gradient,
+            'nsteps': step + 1,
+            'converged': step < max_steps - 1
         }
-        
-        return self._package_result()
-    
-    def _package_result(self):
-        """Return the result dictionary directly"""
-        if self._result is None:
-            raise RuntimeError("Optimization hasn't been run yet")
-        return self._result
-    
-    def _conservative_line_search(self, x, current_energy, grad, direction, initial_step_size):
-        """Line search that guarantees energy decrease"""
-        step_size = min(initial_step_size, self.max_step_size)
-        best_step_size = 0
-        best_energy = current_energy
-        best_x = x.copy()
-        
-        for _ in range(self.max_line_search_steps):
-            candidate_x = x + step_size * direction
-            candidate_energy, _ = self._compute(candidate_x)
-            
-            required_decrease = self.armijo_c1 * step_size * np.dot(grad, direction)
-            
-            if candidate_energy < best_energy:
-                best_energy = candidate_energy
-                best_step_size = step_size
-                best_x = candidate_x.copy()
-                
-                if (current_energy - candidate_energy) < required_decrease:
-                    step_size *= 0.5
-                    continue
-            else:
-                step_size *= 0.5
-                continue
-                
-            break
-            
-        if best_step_size == 0:
-            best_step_size = self.min_step_size
-            best_x = x + best_step_size * direction
-            best_energy, _ = self._compute(best_x)
-            
-        return best_x, best_energy, best_step_size
     
     def _accepted_steps(self):
         return self._accepted_positions
+    
+class FastLocalLBFGS(Optimizer):
+    def __init__(self, abc_sim, init_step_size=0.5, shrink_factor=0.5, **kwargs):
+        """
+        Accelerated local optimizer that:
+        1. Uses L-BFGS-B for fast convergence within basins
+        2. Dynamically shrinks steps that would escape the basin
+        3. Auto-resets step size after successful steps
+        """
+        super().__init__(abc_sim)
+        self.init_step_size = init_step_size  # Initial trust region size
+        self.shrink_factor = shrink_factor    # How aggressively to clip escaping steps
+        self.optimizer_kwargs = kwargs
+        self.accepted_steps = []
+
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
+        self._reset_state()
+        self.accepted_steps = [x0.copy()]
+        x = x0.copy()
+        current_step_size = self.init_step_size
+        
+        options = self.optimizer_kwargs.copy()
+        if max_steps is not None:
+            options['maxiter'] = max_steps
+
+        for _ in range(max_steps or 1000):
+            # Run L-BFGS-B with step control
+            result = minimize(
+                fun=lambda x: self._compute(x)[0],
+                x0=x,
+                method='L-BFGS-B',
+                jac=lambda x: self._compute(x)[1],
+                tol=convergence_threshold,
+                options={**options, 'maxls': 20},  # Limit line searches
+                callback=self._adaptive_step_callback
+            )
+            
+            proposed_x = result.x
+            step = proposed_x - x
+            step_norm = np.linalg.norm(step)
+            
+            # Accept step only if it doesn't exceed current trust region
+            if step_norm <= current_step_size:
+                x = proposed_x
+                current_step_size = self.init_step_size  # Reset trust region
+            else:
+                x = x + (step / step_norm) * current_step_size
+                current_step_size *= self.shrink_factor  # Shrink trust region
+            
+            self.accepted_steps.append(x.copy())
+            
+            # Check convergence
+            _, grad = self._compute(x)
+            if np.linalg.norm(grad) < (convergence_threshold or 1e-6):
+                break
+
+        return {
+            'x': x,
+            'energy': self._compute(x)[0],
+            'gradient': grad,
+            'nsteps': len(self.accepted_steps),
+            'converged': np.linalg.norm(grad) < (convergence_threshold or 1e-6)
+        }
+
+    def _adaptive_step_callback(self, xk):
+        """Track steps without slowing down L-BFGS-B"""
+        if not np.allclose(xk, self.accepted_steps[-1]):
+            self.accepted_steps.append(xk.copy())
+
+    def _accepted_steps(self):
+        return self.accepted_steps.copy()

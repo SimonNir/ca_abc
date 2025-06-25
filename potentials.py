@@ -204,55 +204,123 @@ class ASEPotentialEnergySurface(PotentialEnergySurface):
     def __init__(self, ase_atoms, calculator):
         super().__init__()
         self.atoms = ase_atoms
-        self.atoms.set_calculator(calculator)
+        if calculator is not None: 
+            self.atoms.calc = calculator
 
     def _potential(self, position):
         """Compute potential energy at given position using ASE."""
         # Ensure 'position' is a numpy array of correct shape for ASE
         # For N atoms, it should be (N, 3)
-        self.atoms.set_positions(position.reshape(-1, 3))
+        self.atoms.positions = position.reshape(-1, 3)
         return self.atoms.get_potential_energy()
 
     def _gradient(self, position):
         """Compute gradient at given position using ASE."""
-        self.atoms.set_positions(position.reshape(-1, 3))
+        self.atoms.positions = position.reshape(-1, 3)
         # ASE returns forces, which are negative gradients
         forces = self.atoms.get_forces()
         return -forces.flatten() # Flatten to match your 'position' input shape
 
 
+from ase import Atoms
+from ase.calculators.lj import LennardJones
+import numpy as np
+
 class LennardJonesCluster(ASEPotentialEnergySurface):
-    def __init__(self, num_atoms, initial_positions=None, box_scale = 25):
-        # Create an ASE Atoms object for LJ atoms
-        # 'X' for generic LJ particles
-        symbols = ['X'] * num_atoms
+    def __init__(self, num_atoms, initial_positions=None, 
+                 sigma=1.0, epsilon=1.0, min_distance=0.9, padding=0.5):
+        """
+        A smarter LJ cluster implementation that:
+        - Automatically scales the box size with num_atoms^(1/3)
+        - Ensures particles aren't too close (avoids huge repulsive forces)
+        - Can generate reasonable random or lattice initial positions
         
-        if initial_positions is None:
-            # Random initial positions (example)
-            initial_positions = np.random.rand(num_atoms, 3) * box_scale
-        
-        atoms = Atoms(symbols=symbols, positions=initial_positions, pbc=False)
-        
-        # Attach the ASE LennardJones calculator
-        lj_calculator = LennardJones(epsilon=1.0, sigma=1.0, smooth=False) # Example LJ parameters
-        
-        super().__init__(atoms, lj_calculator)
+        Args:
+            num_atoms: Number of LJ particles
+            initial_positions: Optional starting positions (None for auto-generated)
+            sigma: LJ σ parameter
+            epsilon: LJ ε parameter
+            min_distance: Minimum allowed distance between particles (in units of σ)
+            padding: Extra space around cluster (in units of σ)
+        """
         self.num_atoms = num_atoms
+        self.sigma = sigma
+        self.epsilon = epsilon
+        self.min_distance = min_distance * sigma
+        self.padding = padding * sigma
+
+        # Calculate reasonable box size
+        self.box_size = self._calculate_box_size(num_atoms)
+        
+        # Generate initial positions if not provided
+        if initial_positions is None:
+            initial_positions = self.default_starting_position()
+        
+        # Create ASE Atoms object
+        atoms = Atoms(symbols=['X']*num_atoms, 
+                     positions=initial_positions.reshape(-1,3),
+                     pbc=False)
+        
+        # Setup LJ calculator
+        calculator = LennardJones(sigma=sigma, epsilon=epsilon, 
+                                rc=3*sigma, smooth=False)
+        
+        atoms.calc = calculator
+
+        super().__init__(atoms, None)
+
+    def _calculate_box_size(self, num_atoms):
+        """Calculate box size based on particle count and LJ parameters"""
+        # Volume scales with number of particles
+        volume_per_atom = (4/3) * np.pi * (self.min_distance/2)**3
+        total_volume = num_atoms * volume_per_atom
+        
+        # Cubic root to get linear dimension
+        linear_size = total_volume ** (1/3)
+        
+        # Add padding and convert to box length
+        return linear_size + 2*self.padding
 
     def default_starting_position(self):
-        # Implement specific default starting positions for your LJ clusters
-        # e.g., slightly perturbed perfect cluster, or random.
-        # This should return a 1D numpy array of positions.
-        return self.atoms.get_positions().flatten() # Placeholder
+        """Generate initial positions that avoid extreme forces"""
+        positions = np.zeros((self.num_atoms, 3))
+        
+        # First particle at origin
+        positions[0] = [0, 0, 0]
+        
+        # Place subsequent particles with reasonable spacing
+        for i in range(1, self.num_atoms):
+            while True:
+                # Random position in sphere of decreasing radius
+                r = self.min_distance * (1 + 0.5*i)
+                pos = np.random.uniform(-r, r, size=3)
+                
+                # Check distances to existing particles
+                valid = True
+                for j in range(i):
+                    if np.linalg.norm(pos - positions[j]) < self.min_distance:
+                        valid = False
+                        break
+                
+                if valid:
+                    positions[i] = pos
+                    break
+        
+        # Center the cluster
+        positions -= np.mean(positions, axis=0)
+        
+        return positions.flatten()
 
     def known_minima(self):
-        # Return a list of known global/local minima for this LJ cluster size
-        # Each minimum should be a flattened numpy array of positions
-        # e.g., for LJ38, you might list its two famous minima.
-        return [] # Placeholder
+        """Return known minima for small clusters"""
+        if self.num_atoms == 2:
+            return [np.array([0,0,0, 0,0,1.12*self.sigma])]  # Diatomic minimum
+        elif self.num_atoms == 3:
+            return [np.array([0,0,0, 0,0.5*1.12*self.sigma,0.866*1.12*self.sigma, 
+                            0,-0.5*1.12*self.sigma,0.866*1.12*self.sigma])]  # Equilateral triangle
+        # Add more known minima as needed
+        return []
 
     def known_saddles(self):
-        # Return a list of known saddle points for this LJ cluster size
-        return [] # Placeholder    
-    
-
+        """Return known transition states for small clusters"""
+        return []

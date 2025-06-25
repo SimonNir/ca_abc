@@ -19,7 +19,7 @@ class GaussianBias:
     def __init__(self, center, covariance, height):
         self.center = np.atleast_1d(center)
         self.height = height
-        print(covariance)
+        # print(covariance)
         
         # Handle scalar covariance input
         if np.isscalar(covariance):

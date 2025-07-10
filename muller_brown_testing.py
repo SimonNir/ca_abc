@@ -34,18 +34,16 @@ def run_2d_simulation():
         
         max_descent_steps=1000,
         descent_convergence_threshold=1e-5, 
-        max_acceptable_force_mag=1e20
+        max_acceptable_force_mag=1e5
     )
-
-    n = 5144
     
     opt = ScipyOptimizer(abc, 'BFGS')    
-    abc.run(max_iterations=300, optimizer=opt, verbose=True)
+    abc.run(max_iterations=200, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
     analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
-    analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
+    # analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
 
 def main():
         run_2d_simulation()

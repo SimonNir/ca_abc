@@ -35,6 +35,7 @@ class CurvatureAdaptiveABC:
         curvature_perturbation_scale = 1.0,
         
         # Biasing strategy
+        remove_rotation_translation = True, 
         bias_height_type ="adaptive",
         bias_covariance_type = "adaptive",
         default_bias_height = 1.0,
@@ -68,6 +69,8 @@ class CurvatureAdaptiveABC:
 
         self.dump_every = dump_every
         self.dump_folder = dump_folder 
+
+        self.remove_rotation_translation=remove_rotation_translation
 
          # Initialize state variables
         self.reset(starting_position)
@@ -118,6 +121,10 @@ class CurvatureAdaptiveABC:
         self.saddles = []
 
         self.dimension = len(self.position)
+        if self.dimension % 3 !=0 and self.remove_rotation_translation:
+            print("remove_rotation_translation=True is incompatible with potentials without 3N cartesian dimensions; setting to False.")
+            self.remove_rotation_translation=False
+
         self.most_recent_hessian = None 
 
         self.current_iteration = 0
@@ -178,9 +185,73 @@ class CurvatureAdaptiveABC:
         self.current_iteration += 1
 
     # Core functionality (adapted from TraditionalABC with enhancements)
+
+    def kabsch(self, pos, ref):
+        pos = np.array(pos).reshape(-1, 3)
+        ref = np.array(ref).reshape(-1, 3)
+
+        # Subtract centroids
+        pos_centroid = pos.mean(axis=0)
+        ref_centroid = ref.mean(axis=0)
+        pos_centered = pos - pos_centroid
+        ref_centered = ref - ref_centroid
+
+        # Compute covariance matrix
+        H = pos_centered.T @ ref_centered
+
+        # SVD
+        U, S, Vt = np.linalg.svd(H)
+        R = Vt.T @ U.T
+
+        # Correct improper rotation (reflection)
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
+
+        # Rotate and translate pos to align with ref
+        aligned = (pos_centered @ R) + ref_centroid
+
+        return aligned.reshape(-1)
+
+    def canonicalize(self, position):
+        if len(self.trajectory) == 0:
+            position = np.array(position).reshape(-1,3)
+            position -= np.mean(position, axis=0)
+            return position.flatten() 
+        else:
+            # Kabsch alignment to the first structure in trajectory
+            ref = np.array(self.trajectory[0]).reshape(-1, 3)
+            mobile = np.array(position).reshape(-1, 3)
+
+            # Subtract centroids
+            ref_centroid = ref.mean(axis=0)
+            mobile_centroid = mobile.mean(axis=0)
+            ref_centered = ref - ref_centroid
+            mobile_centered = mobile - mobile_centroid
+
+            # Compute covariance matrix
+            H = mobile_centered.T @ ref_centered
+
+            # SVD
+            U, S, Vt = np.linalg.svd(H)
+            R = Vt.T @ U.T
+
+            # Correct improper rotation (reflection)
+            if np.linalg.det(R) < 0:
+                Vt[-1, :] *= -1
+                R = Vt.T @ U.T
+
+            # Rotate and translate mobile to align with ref
+            aligned = (mobile_centered @ R) + ref_centroid
+
+            return aligned.reshape(-1)
     
     def compute_biased_potential(self, position, unbiased: float = None) -> float:
         """Fully vectorized potential computation with empty bias list handling."""
+
+        if self.remove_rotation_translation:
+            position = self.canonicalize(position)
+
         V = self.potential.potential(position) if unbiased is None else unbiased
         
         # Early return if no biases
@@ -201,6 +272,10 @@ class CurvatureAdaptiveABC:
 
     def compute_biased_force(self, position, unbiased: np.ndarray = None, eps=1e-5) -> np.ndarray:
         """Fully vectorized force computation with empty bias list handling."""
+
+        if self.remove_rotation_translation:
+            position = self.canonicalize(position)
+
         if unbiased is None:
             try:
                 unbiased = -self.potential.gradient(position)
@@ -219,22 +294,23 @@ class CurvatureAdaptiveABC:
                 
                 if (norm := np.linalg.norm(force)) > self.max_acceptable_force_mag:
                     force = self.max_acceptable_force_mag * force / norm
-                return force
+                return np.array(force)
         
         # Early return if no biases
         if not self.bias_list:
-            return -unbiased.copy()
+            return unbiased.copy()
         
         # Vectorized bias gradient calculation
         centers = np.array([b.center for b in self.bias_list])
         covs = np.stack([np.atleast_2d(b.covariance) for b in self.bias_list])  # Ensure each covariance is 2D
         heights = np.array([b.height for b in self.bias_list])
         
-        diffs = position - centers
-        inv_covs = np.linalg.inv(covs)
+        diffs = position - centers                      # shape (N, D)
+        inv_covs = np.linalg.inv(covs)                 # shape (N, D, D)
         exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
-        grads = -diffs @ inv_covs * (heights * np.exp(exponents))[:, None]
-        total_grad = -unbiased.copy() + np.sum(grads, axis=0)
+        mv_products = np.einsum('nij,nj->ni', inv_covs, diffs)  # shape (N, D)
+        grads = -mv_products * (heights * np.exp(exponents))[:, None]  # shape (N, D)
+        total_grad = -np.array(unbiased.copy()) + np.sum(grads, axis=0)
         
         force = -total_grad
         if (norm := np.linalg.norm(force)) > self.max_acceptable_force_mag:
@@ -243,7 +319,7 @@ class CurvatureAdaptiveABC:
         
         return force
     
-    def compute_hessian_finite_difference(self, position, eps=1e-5, f0_already_computed=False):
+    def compute_hessian_finite_difference(self, position, eps=1e-3, f0_already_computed=False):
         n = len(position)
         hessian = np.zeros((n, n))
         if f0_already_computed:
@@ -274,7 +350,7 @@ class CurvatureAdaptiveABC:
                 if i != j:
                     hessian[j, i] = val  # Exploit symmetry
 
-        return hessian  # negative because working with -∇V
+        return -hessian  # negative because working with -∇V
     
     def deposit_bias(self, center: np.ndarray = None, covariance: float|np.ndarray = None, height: float = None, verbose=False):
         """Deposit a new Gaussian bias potential.
@@ -285,8 +361,8 @@ class CurvatureAdaptiveABC:
             height: Height of the bias.
         """
         pos = center if center is not None else self.position.copy()
-        if verbose:
-            print('Bias position:', pos)
+        # if verbose:
+        #     print('Bias position:', pos)
 
         if height is not None: 
             h = height 
@@ -303,7 +379,7 @@ class CurvatureAdaptiveABC:
         max_height = self.max_bias_height # or self.default_bias_height*2
         clipped_h = np.clip(h, min_height, max_height)
 
-        if verbose:
+        if verbose and self.bias_height_type.lower() == "adaptive":
             print("Original height:", h)
             print("Clipped height:", clipped_h)
 
@@ -313,7 +389,7 @@ class CurvatureAdaptiveABC:
             # Smart bias scaling based on curvature if available
             if self.bias_covariance_type == "adaptive":
                     # Scale covariance by inverse curvature
-                    if self.most_recent_hessian is not None  and not np.isnan(self.most_recent_hessian): 
+                    if self.most_recent_hessian is not None  and not np.any(np.isnan(self.most_recent_hessian)): 
                         cov = self.curvature_bias_covariance_scale * np.linalg.inv(
                             self.make_positive_definite(self.most_recent_hessian)
                         )
@@ -333,7 +409,7 @@ class CurvatureAdaptiveABC:
 
         # 3. Reconstruct with dimension guarantees
         n = len(eigvals)
-        if verbose:
+        if verbose and self.bias_covariance_type.lower() =="adaptive":
             n_clipped = np.sum((eigvals != clipped_eigvals))
             print(f"Eigenvalues clipped: {n_clipped} / {n}")
             print("Original eigvals:", eigvals)
@@ -360,7 +436,7 @@ class CurvatureAdaptiveABC:
         )
         self.bias_list.append(bias)
 
-        if verbose:
+        if verbose and self.bias_covariance_type.lower() == "adaptive":
             approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
             print("Approximate bias volume:", approx_vol)
 
@@ -378,7 +454,11 @@ class CurvatureAdaptiveABC:
         if not converged:
             print(result['message'] if 'message' in result else None)
         hess_inv = result['hess_inv'] if 'hess_inv' in result else None
-        traj, unbiased_e, biased_e, unbiased_f, biased_f = traj_data 
+        traj = traj_data['trajectory']
+        unbiased_e = traj_data['unbiased_energies']
+        biased_e = traj_data['biased_energies']
+        unbiased_f = traj_data['unbiased_forces']
+        biased_f = traj_data['biased_forces']
         self.trajectory.extend(traj)
         self.unbiased_energies.extend(unbiased_e)
         self.biased_energies.extend(biased_e)
@@ -387,8 +467,14 @@ class CurvatureAdaptiveABC:
 
         # Process curvature and check minimum (same as before)
         self._process_curvature_info(final_pos, hess_inv)
-        self._check_minimum(converged or result['message'] == "Desired error not necessarily achieved due to precision loss.", 
-                            final_pos, convergence_threshold*100)
+
+        check_min = converged
+        if 'message' in result: 
+            check_min == check_min or (result['message'] == 'Desired error not necessarily achieved due to precision loss.')
+    
+        # check_min = check_min and not (np.all(np.isclose(self.position, self.trajectory[0], 3)))
+
+        self._check_minimum(check_min, final_pos)
 
         self.position = final_pos.copy()
         return converged
@@ -405,7 +491,7 @@ class CurvatureAdaptiveABC:
         elif self.curvature_method.lower() == "bfgs" and hess_inv is not None:
             self.most_recent_hessian = np.linalg.inv(hess_inv)
 
-    def _check_minimum(self, converged, final_pos, threshold):
+    def _check_minimum(self, converged, final_pos):
         """Check if the final position is a minimum."""
         if converged:
             if self.unbiased_forces[-1] is None:
@@ -414,7 +500,7 @@ class CurvatureAdaptiveABC:
                     unbiased_force -= (-bias.gradient(final_pos))
             else:
                 unbiased_force = self.unbiased_forces[-1]
-            
+
             # if np.linalg.norm(unbiased_force) < threshold:
             #     # if self.most_recent_inv_hessian is not None: 
             #     #     try:
@@ -436,8 +522,18 @@ class CurvatureAdaptiveABC:
             #     # else:
             #     self.minima.append(final_pos.copy())
 
-            if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/100):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/100):
+            pos = final_pos.copy()
+            # check if RMSD < threshold 
+            diff_threshold = 1
+
+            def rmsd(struc, ref):
+                diff = self.kabsch(struc, ref).reshape(-1, 3) - ref.reshape(-1, 3)
+                return np.sqrt(np.mean(np.sum(diff**2, axis=1)))
+
+            if self.dimension % 3 != 0 or not any([rmsd(pos, minim) < diff_threshold for minim in self.minima]):
                 self.minima.append(final_pos.copy())
+                
 
     
     def evaluate_critical_point(self, hessian):
@@ -492,9 +588,10 @@ class CurvatureAdaptiveABC:
     def perturb(self, type="adaptive"):
         if type == "adaptive":
             direction, curvature = self.get_softest_hessian_mode(self.position)
+            print(direction, curvature)
             if self.scale_perturb_by_curvature:
                 ### CRUCIAL CODE 
-                scale = np.clip(self.curvature_perturbation_scale/np.sqrt(curvature), self.default_perturbation_size/10, self.default_perturbation_size*10)
+                scale = np.clip(self.curvature_perturbation_scale/np.sqrt(np.abs(curvature)), self.default_perturbation_size/10, self.default_perturbation_size*10)
                 ###
             else: 
                 scale = self.default_perturbation_size                    
@@ -521,33 +618,121 @@ class CurvatureAdaptiveABC:
         
         for iteration in range(self.current_iteration, max_iterations):
             # Descent phase
+            # print("Before:", self.position)
+            old_pos = self.position.copy()
             converged = self.descend()
-            
+            # print("delta:", delta:= np.linalg.norm(self.position-old_pos))
+            # if delta < 1e-6:
+            #     print("Did not sufficiently move:")
+            #     print(self.biased_forces[-1])
+            #     self.descend(convergence_threshold=1e-6, max_steps=1e4)
+
             pos = self.position.copy() # position before perturbation
-                               
-            # Perturbation
+           
             if self.current_iteration % self.random_perturb_every == 0: 
                 self.perturb(type="random")
             else:
                 self.perturb(type=self.perturb_type)
 
-            # Deposit bias
+
+            # if self.current_iteration!=0: 
             self.deposit_bias(pos, verbose=verbose)
-            
+                
             self.update_records()
-            
+                
             if verbose:
                 print(f"Iteration {iteration+1}/{max_iterations}: "
-                      f"Descent converged: {converged}, "
-                      f"Position:{self.position}, "
-                      f"Biased Energy: {self.biased_energies[-1]}")
+                    f"Descent converged: {converged}, "
+                    f"Position:{self.position}, "
+                    f"Biased Energy: {self.biased_energies[-1]}")
                 print()
         
-        print(f"Simulation completed.\n"
-              f"Identified minima: {self.minima},\n")
-        if self.saddles: 
-            print(f"On-the-fly-identified saddle-points: {self.saddles}\n")
+        print(f"Simulation completed.\n")
+        try: 
+            self.summarize()
+        except Exception as e:
+            print(f"Unable to complete summary:\n{e}")
+    
+    def summarize(self):
+        """Print a comprehensive summary of the optimization results."""
+        output = []
         
-        print(f"\tTotal energy calls: {self.potential.energy_calls}\n"
-              f"\tTotal force calls: {self.potential.force_calls}\n"
-              f"\tTotal steps: {len(self.trajectory)}")
+        # 1. Report all found minima with energies
+        if self.minima:
+            output.append("\nEnergies of found minima:")
+            for i, min_pos in enumerate(self.minima):
+                idx = np.argmin(np.linalg.norm(np.array(self.trajectory) - np.array(min_pos), axis=1))
+                output.append(f"Minimum {i+1}: Position = {min_pos}, Energy = {self.unbiased_energies[idx]}")
+
+        # 2. Report any on-the-fly saddle points
+        if self.saddles: 
+            output.append(f"\nOn-the-fly-identified saddle-points: {self.saddles}")
+
+        # 3. Calculate approximate saddle points between minima
+        if len(self.minima) > 1:
+            minima_indices = sorted([
+                np.argmin(np.linalg.norm(np.array(self.trajectory) - np.array(min_pos), axis=1))
+                for min_pos in self.minima
+            ])
+            
+            saddle_info = []
+            for i in range(len(minima_indices) - 1):
+                start, end = minima_indices[i], minima_indices[i + 1]
+                segment = slice(start, end + 1)
+                max_idx = np.argmax(self.unbiased_energies[segment])
+                
+                saddle_info.append((
+                    self.trajectory[start + max_idx],
+                    self.unbiased_energies[start + max_idx]
+                ))
+            
+            output.append("\nApproximate saddle points between minima:")
+            for i, (pos, energy) in enumerate(saddle_info):
+                output.append(f"Saddle {i+1}: Position = {pos}, Energy = {energy}")
+                self.saddles.append(pos)
+
+        # 4. Report computational statistics
+        output.append("\nComputational statistics:")
+        output.append(f"\tEnergy evaluations: {self.potential.energy_calls}")
+        output.append(f"\tForce evaluations: {self.potential.force_calls}")
+        output.append(f"\tTotal steps: {len(self.trajectory)}")
+
+        # 5. Report verification against known minima (if available) - MOVED TO END
+        if hasattr(self.potential, "known_minima"):
+            true_minima = self.potential.known_minima()
+            found_minima = np.array(self.minima)
+            matched = [np.any(np.linalg.norm(found_minima - np.array(true_min), axis=1) < 1e-3) for true_min in true_minima]
+            
+            output.append("\nVerification against reference:")
+            output.append(f"True minima found: {sum(matched)}/{len(true_minima)}")
+            if not all(matched):
+                output.append("Missed minima at positions:")
+            for i, found in enumerate(matched):
+                if not found:
+                    output.append(str(true_minima[i]))
+
+        if hasattr(self.potential, "known_saddles"):
+            true_saddles = self.potential.known_saddles()
+            found_saddles = np.array(self.saddles)
+            
+            # Only proceed if we have found saddles and they exist
+            if len(found_saddles) > 0:
+                # Ensure found_saddles is 2D (reshape if necessary)
+                if found_saddles.ndim == 1:
+                    found_saddles = found_saddles.reshape(-1, 1)
+                    
+                matched_saddles = [np.any(np.linalg.norm(found_saddles - true_sad.reshape(1, -1), axis=1) < 1e-2) 
+                                for true_sad in true_saddles]
+            else:
+                matched_saddles = [False] * len(true_saddles)
+
+            output.append("\nVerification against reference (saddles):")
+            output.append(f"True saddles found: {sum(matched_saddles)}/{len(true_saddles)}")
+            if not all(matched_saddles):
+                output.append("Missed saddles at positions:")
+                for i, found in enumerate(matched_saddles):
+                    if not found:
+                        output.append(str(true_saddles[i]))
+
+        # Print all collected output
+        print('\n'.join(output))

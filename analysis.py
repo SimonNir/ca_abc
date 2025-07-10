@@ -95,7 +95,7 @@ class ABCAnalysis:
                 filename = "abc_results.png"
             fig.savefig(filename, dpi=300, bbox_inches='tight')
 
-    def plot_summary(self, filename=None, save_plots=False, plot_type='both'):
+    def plot_summary(self, filename=None, save_plots=False, plot_type='neither'):
         """Generate standard summary plots appropriate for system dimension"""
         if self.dimension == 1:
             self._plot_1d_summary(filename, save_plots, plot_type)
@@ -105,7 +105,7 @@ class ABCAnalysis:
             print(f"Standard visualization not supported for {self.dimension}D systems")
             self.plot_diagnostics(plot_type=plot_type)
 
-    def _plot_1d_summary(self, filename=None, save_plots=False, plot_type='both'):
+    def _plot_1d_summary(self, filename=None, save_plots=False, plot_type='neither'):
         """1D summary plots (potential, trajectory, histogram, energy profile)"""
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
         
@@ -117,7 +117,7 @@ class ABCAnalysis:
         if plot_type in ["both", "biases"]:
             # Mark biases in red
             for i, bias in enumerate(self.abc.bias_list):
-                ax1.axvline(bias.center[0], color='red', linestyle='-', alpha=0.5, label='Biases' if i == 0 else None)
+                ax1.axvline(bias.center[0], color='red', linestyle='-', alpha=0.1, label='Biases' if i == 0 else None)
         
         ax1.set_title('Potential Energy Landscape')
         ax1.set_xlabel('x')
@@ -200,12 +200,12 @@ class ABCAnalysis:
         # Mark bias centers
         bias_centers = [b.center for b in self.abc.bias_list]
         ax2.scatter([c[0] for c in bias_centers], [c[1] for c in bias_centers],
-                   c='red', s=50, marker='x', label='Bias Centers')
+                   c='red', s=5, marker='x', label='Bias Centers')
         
         # Mark found minima and saddles
-        ax1.scatter([m[0] for m in self.abc.minima], [m[1] for m in self.abc.minima],
-                   c='g', marker='o', s=50, label='Found Minima')
-        ax1.scatter([s[0] for s in self.abc.saddles], [s[1] for s in self.abc.saddles],
+        ax2.scatter([m[0] for m in self.abc.minima], [m[1] for m in self.abc.minima],
+                   c='green', marker='o', s=50, label='Found Minima')
+        ax2.scatter([s[0] for s in self.abc.saddles], [s[1] for s in self.abc.saddles],
                    c='purple', marker='o', s=50, label='Found Saddles')
         
         ax2.set_title('Biased Potential Surface')
@@ -310,13 +310,18 @@ class ABCAnalysis:
             
             try:
                 trajectory = self.get_trajectory()
-                print(f"Trajectory length: {len(trajectory)}")
+                # print(f"Trajectory length: {len(trajectory)}")
                 
                 minima_indices = [
                     np.argmin(np.linalg.norm(trajectory - min_pos, axis=1))
                     for min_pos in self.abc.minima
                 ]
                 # print(f"Minima indices: {minima_indices}")
+
+                saddle_indices = [
+                    np.argmin(np.linalg.norm(trajectory - saddle_pos, axis=1))
+                    for saddle_pos in self.abc.saddles
+                ]
                 
                 barriers = []
                 labels = []
@@ -355,6 +360,13 @@ class ABCAnalysis:
                     if step < len(energies):
                         ax1.scatter(step, energies[step], c='green', s=50, marker='*', 
                                 label='Minima' if i == 0 else None, zorder=5)
+                        
+
+                for i, step in enumerate(saddle_indices):
+                    if step < len(energies):
+                        ax1.scatter(step, energies[step], c='purple', s=50, marker='*', 
+                                label='Saddles' if i == 0 else None, zorder=5)
+                        
             except Exception as e:
                 print(f"Error calculating barriers: {str(e)}")
                 # Set default view for text

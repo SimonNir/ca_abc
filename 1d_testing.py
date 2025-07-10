@@ -41,12 +41,13 @@ def run_1d_simulation():
         perturb_type="fixed",
         default_perturbation_size=0.05,
         scale_perturb_by_curvature=False,
+        random_perturb_every=3,
      
         bias_height_type="fixed",
-        default_bias_height=0.01,
+        default_bias_height=0.1,
         min_bias_height= 0.05,
         max_bias_height= 4,
-        curvature_bias_height_scale=0.03,
+        curvature_bias_height_scale=0.02,
 
         bias_covariance_type="fixed",
         default_bias_covariance=0.01,
@@ -59,15 +60,16 @@ def run_1d_simulation():
     )
 
     # myopt = SimpleGradientDescent(abc, step_size=0.01)
-    myopt = ScipyOptimizer(abc, method="BFGS")
-    abc.run(max_iterations=3000, optimizer=myopt, verbose=True)
+    myopt = ScipyOptimizer(abc, method="L-BFGS-B")
+    # myopt = ASEOptimizer(abc, optimizer_class='FIRE')
+    abc.run(max_iterations=400, optimizer=myopt, verbose=True)
         
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
     analyzer.plot_summary(save_plots=False, filename="1d_smart_abc.png", plot_type="neither")
     analyzer.plot_diagnostics(save_plots=False, filename="1d_smart_abc_diagnostics.png")
 
-    analyzer.create_basin_filling_gif(fps=60, filename="traditional_abc.gif")
+    analyzer.create_basin_filling_gif(fps=60, filename="testing_ase_opt.gif")
 
 
 def main():

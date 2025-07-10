@@ -226,101 +226,114 @@ from ase import Atoms
 from ase.calculators.lj import LennardJones
 import numpy as np
 
+import numpy as np
+from ase import Atoms
+from ase.calculators.lj import LennardJones
+from potentials import ASEPotentialEnergySurface  # or your custom PES wrapper
+
 class LennardJonesCluster(ASEPotentialEnergySurface):
-    def __init__(self, num_atoms, initial_positions=None, 
-                 sigma=1.0, epsilon=1.0, min_distance=0.9, padding=0.5):
+    def __init__(self, num_atoms, initial_positions=None,
+                 sigma=1.0, epsilon=1.0, min_distance=0.9, padding=0.5,
+                 barrier_strength=10.0):
         """
-        A smarter LJ cluster implementation that:
-        - Automatically scales the box size with num_atoms^(1/3)
-        - Ensures particles aren't too close (avoids huge repulsive forces)
-        - Can generate reasonable random or lattice initial positions
-        
+        Smarter Lennard-Jones cluster with optional boundary penalty.
+
         Args:
-            num_atoms: Number of LJ particles
-            initial_positions: Optional starting positions (None for auto-generated)
+            num_atoms: Number of atoms
+            initial_positions: Starting positions, or None to generate
             sigma: LJ σ parameter
             epsilon: LJ ε parameter
-            min_distance: Minimum allowed distance between particles (in units of σ)
-            padding: Extra space around cluster (in units of σ)
+            min_distance: Minimum spacing between atoms (in σ units)
+            padding: Box padding around typical cluster size (in σ units)
+            barrier_strength: Strength of the soft wall boundary penalty
         """
         self.num_atoms = num_atoms
         self.sigma = sigma
         self.epsilon = epsilon
         self.min_distance = min_distance * sigma
         self.padding = padding * sigma
+        self.barrier_strength = barrier_strength
 
-        # Calculate reasonable box size
-        self.box_size = self._calculate_box_size(num_atoms)
-        
-        # Generate initial positions if not provided
+        # Determine bounding box
+        self.box_size = self._calculate_box_size()
+        self.half_box = self.box_size / 2
+
+        # Generate initial positions
         if initial_positions is None:
             initial_positions = self.default_starting_position()
-        
-        # Create ASE Atoms object
-        atoms = Atoms(symbols=['X']*num_atoms, 
-                     positions=initial_positions.reshape(-1,3),
-                     pbc=False)
-        
-        # Setup LJ calculator
-        calculator = LennardJones(sigma=sigma, epsilon=epsilon, 
-                                rc=3*sigma, smooth=False)
-        
-        atoms.calc = calculator
+        initial_positions = np.array(initial_positions).reshape(-1, 3)
+
+        # Create atoms and assign calculator
+        atoms = Atoms('X' * num_atoms, positions=initial_positions, pbc=False)
+        atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=3 * sigma, smooth=True)
 
         super().__init__(atoms, None)
 
-    def _calculate_box_size(self, num_atoms):
-        """Calculate box size based on particle count and LJ parameters"""
-        # Volume scales with number of particles
-        volume_per_atom = (4/3) * np.pi * (self.min_distance/2)**3
-        total_volume = num_atoms * volume_per_atom
-        
-        # Cubic root to get linear dimension
-        linear_size = total_volume ** (1/3)
-        
-        # Add padding and convert to box length
-        return linear_size + 2*self.padding
+    def _calculate_box_size(self):
+        """Estimate a reasonable box size based on density and padding."""
+        volume_per_atom = (4 / 3) * np.pi * (self.min_distance / 2)**3
+        total_volume = self.num_atoms * volume_per_atom
+        linear_size = total_volume**(1 / 3)
+        return linear_size + 2 * self.padding
 
     def default_starting_position(self):
-        """Generate initial positions that avoid extreme forces"""
-        positions = np.zeros((self.num_atoms, 3))
-        
-        # First particle at origin
-        positions[0] = [0, 0, 0]
-        
-        # Place subsequent particles with reasonable spacing
-        for i in range(1, self.num_atoms):
-            while True:
-                # Random position in sphere of decreasing radius
-                r = self.min_distance * (1 + 0.5*i)
-                pos = np.random.uniform(-r, r, size=3)
-                
-                # Check distances to existing particles
-                valid = True
-                for j in range(i):
-                    if np.linalg.norm(pos - positions[j]) < self.min_distance:
-                        valid = False
-                        break
-                
-                if valid:
-                    positions[i] = pos
-                    break
-        
-        # Center the cluster
-        positions -= np.mean(positions, axis=0)
-        
+        """Generate valid initial positions inside the bounding box."""
+        positions = []
+        attempts = 0
+        while len(positions) < self.num_atoms:
+            trial = np.random.uniform(-self.half_box, self.half_box, 3)
+            if all(np.linalg.norm(trial - np.array(p)) >= self.min_distance for p in positions):
+                positions.append(trial)
+            attempts += 1
+            if attempts > 5000:
+                raise RuntimeError("Failed to generate non-overlapping initial positions.")
+        positions = np.array(positions)
+        positions -= positions.mean(axis=0)  # Center cluster
         return positions.flatten()
 
+    def _potential(self, position):
+        """Compute potential energy at given position using ASE."""
+        # Ensure 'position' is a numpy array of correct shape for ASE
+        # For N atoms, it should be (N, 3)
+        self.atoms.positions = position.reshape(-1, 3)
+        return self.atoms.get_potential_energy() + self._boundary_penalty(position.reshape(-1, 3))
+
+    def _gradient(self, position):
+        """Compute gradient at given position using ASE."""
+        self.atoms.positions = position.reshape(-1, 3)
+        # ASE returns forces, which are negative gradients
+        forces = self.atoms.get_forces() - self._boundary_penalty_gradient(position.reshape(-1, 3))
+        return -forces.flatten() # Flatten to match your 'position' input shape
+
+    def _boundary_penalty(self, positions):
+        """Vectorized soft quartic wall potential to prevent atoms from escaping box."""
+        # positions: (N, 3)
+        over = np.abs(positions) - self.half_box
+        mask = over > 0
+        penalty = self.barrier_strength * np.sum(over[mask] ** 4)
+        return penalty
+
+    def _boundary_penalty_gradient(self, positions):
+        """Vectorized gradient of the soft wall potential."""
+        over = np.abs(positions) - self.half_box
+        mask = over > 0
+        grad = np.zeros_like(positions)
+        # Only apply where mask is True
+        grad[mask] = 4 * self.barrier_strength * (over[mask] ** 3) * np.sign(positions[mask])
+        return grad
+
     def known_minima(self):
-        """Return known minima for small clusters"""
+        """Return known configurations for testing small systems."""
         if self.num_atoms == 2:
-            return [np.array([0,0,0, 0,0,1.12*self.sigma])]  # Diatomic minimum
+            return [np.array([0, 0, 0, 0, 0, 1.12 * self.sigma])]
         elif self.num_atoms == 3:
-            return [np.array([0,0,0, 0,0.5*1.12*self.sigma,0.866*1.12*self.sigma, 
-                            0,-0.5*1.12*self.sigma,0.866*1.12*self.sigma])]  # Equilateral triangle
-        # Add more known minima as needed
+            a = 1.12 * self.sigma
+            return [np.array([
+                0, 0, 0,
+                0, 0.5 * a, 0.866 * a,
+                0, -0.5 * a, 0.866 * a
+            ])]
         return []
 
     def known_saddles(self):
-        """Return known transition states for small clusters"""
         return []

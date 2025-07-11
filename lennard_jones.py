@@ -8,7 +8,7 @@ from ase import Atoms
 def main(): 
     np.random.seed(4)
 
-    lj = LennardJonesCluster(num_atoms=5)
+    lj = LennardJonesCluster(num_atoms=5, barrier_strength=10)
 
     # lj = DoubleWell1D()
 
@@ -23,13 +23,12 @@ def main():
                    descent_convergence_threshold=1e-5, 
                    default_bias_height=.5,
                    default_bias_covariance=1.5,
-                   default_perturbation_size=0.5,
-                   max_acceptable_force_mag=1e5, 
-                   remove_rotation_translation=True,
+                   default_perturbation_size=0.01,
+                   remove_rotation_translation=False,
                    )
     
-    opt = ScipyOptimizer(abc, 'CG')
-    abc.run(max_iterations=200, optimizer=opt, verbose=True)
+    opt = ScipyOptimizer(abc, 'BFGS')
+    abc.run(max_iterations=300, optimizer=opt, verbose=True)
 
     # analyzer = ABCAnalysis("abc_data")
     analyzer = ABCAnalysis(abc)

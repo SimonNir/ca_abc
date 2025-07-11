@@ -51,7 +51,7 @@ class CurvatureAdaptiveABC:
         descent_convergence_threshold=1e-5,
         max_descent_steps=20,
         max_descent_step_size=1.0,
-        max_acceptable_force_mag = 1000.
+        max_acceptable_force_mag = 1e99 # bfgs actually does best with uncapped max force
     ):
         """
         Initialize the SmartABC sampler.
@@ -361,6 +361,10 @@ class CurvatureAdaptiveABC:
             height: Height of the bias.
         """
         pos = center if center is not None else self.position.copy()
+
+        if self.remove_rotation_translation:
+            pos = self.canonicalize(pos)
+            
         # if verbose:
         #     print('Bias position:', pos)
 
@@ -447,36 +451,41 @@ class CurvatureAdaptiveABC:
         """
         max_steps = max_steps or self.max_descent_steps
         convergence_threshold = convergence_threshold or self.descent_convergence_threshold
+        
+        max_attempts = 10
+        attempt = 0
+        while attempt == 0 or attempt < max_attempts and message == "Desired error not necessarily achieved due to precision loss.": 
+            result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold)
+            final_pos = result['x']
+            converged = result['converged']
+            hess_inv = result['hess_inv'] if 'hess_inv' in result else None
+            traj = traj_data['trajectory']
+            unbiased_e = traj_data['unbiased_energies']
+            biased_e = traj_data['biased_energies']
+            unbiased_f = traj_data['unbiased_forces']
+            biased_f = traj_data['biased_forces']
+            self.trajectory.extend(traj)
+            self.unbiased_energies.extend(unbiased_e)
+            self.biased_energies.extend(biased_e)
+            self.unbiased_forces.extend(unbiased_f)
+            self.biased_forces.extend(biased_f)
 
-        result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold)
-        final_pos = result['x']
-        converged = result['converged']
+            self.position = final_pos.copy()
+            message = result['message']
+            # print('attempt:', attempt)
+            # print('force:', self.biased_forces[-1])
+            attempt += 1 
+        
         if not converged:
-            print(result['message'] if 'message' in result else None)
-        hess_inv = result['hess_inv'] if 'hess_inv' in result else None
-        traj = traj_data['trajectory']
-        unbiased_e = traj_data['unbiased_energies']
-        biased_e = traj_data['biased_energies']
-        unbiased_f = traj_data['unbiased_forces']
-        biased_f = traj_data['biased_forces']
-        self.trajectory.extend(traj)
-        self.unbiased_energies.extend(unbiased_e)
-        self.biased_energies.extend(biased_e)
-        self.unbiased_forces.extend(unbiased_f)
-        self.biased_forces.extend(biased_f)
+                print(result['message'] if 'message' in result else None)
 
         # Process curvature and check minimum (same as before)
         self._process_curvature_info(final_pos, hess_inv)
 
-        check_min = converged
-        if 'message' in result: 
-            check_min == check_min or (result['message'] == 'Desired error not necessarily achieved due to precision loss.')
-    
         # check_min = check_min and not (np.all(np.isclose(self.position, self.trajectory[0], 3)))
 
-        self._check_minimum(check_min, final_pos)
+        self._check_minimum(converged, final_pos)
 
-        self.position = final_pos.copy()
         return converged
 
     # Curvature util

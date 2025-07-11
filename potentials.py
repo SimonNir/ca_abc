@@ -337,3 +337,6 @@ class LennardJonesCluster(ASEPotentialEnergySurface):
 
     def known_saddles(self):
         return []
+    
+class InvariantLennardJones(PotentialEnergySurface):
+    

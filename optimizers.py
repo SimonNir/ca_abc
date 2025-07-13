@@ -40,7 +40,7 @@ class Optimizer(ABC):
             self.unbiased_forces.append(unbiased_force)
             self.biased_forces.append(biased_force)
         
-        return self.biased_energies[-1], -self.biased_forces[-1]  # (energy, gradient)
+        return self.biased_energies[-1], -self.biased_forces[-1].reshape(-1)  # (energy, gradient)
 
 
     def get_traj_data(self):
@@ -60,6 +60,14 @@ class Optimizer(ABC):
                         indices.append(i)
                         found = True
                         print(f"Warning: Position {pos} not found with tol={1e-10}, matched with tol={1e-8} at index {i}.")
+                        break
+            if not found:
+                # Try with a higher tolerance
+                for i, traj_pos in enumerate(self.trajectory):
+                    if np.allclose(pos, traj_pos, atol=1e-6):
+                        indices.append(i)
+                        found = True
+                        print(f"Warning: Position {pos} not found with tol={1e-10} or {1e-8}, matched with tol={1e-6} at index {i}.")
                         break
             if not found:
                 print(f"Warning: Accepted position {pos} not found in trajectory with any tolerance.")
@@ -144,7 +152,7 @@ class ScipyOptimizer(Optimizer):
 
         def callback(x):
             nonlocal last_accepted_x
-            if not np.allclose(x, last_accepted_x):
+            if not np.allclose(x, last_accepted_x, 1e-10):
                 self._compute(x)  # Ensure cached
                 self.accepted_steps.append(x.copy())
                 last_accepted_x = x.copy()
@@ -185,10 +193,10 @@ class ScipyOptimizer(Optimizer):
         
         # Handle Hessian information differently for each method
         if hasattr(self._result, 'hess_inv'):
-            if self.method == 'bfgs':
+            if self.method.lower() == 'bfgs':
                 # BFGS provides dense matrix directly
                 result['hess_inv'] = self._result.hess_inv
-            elif self.method == 'l-bfgs-b':
+            elif self.method.lower() == 'l-bfgs-b':
                 # L-BFGS-B needs conversion from LinearOperator
                 result['hess_inv'] = self._construct_l_bfgs_hess_inv(self._result.hess_inv)
         
@@ -211,6 +219,7 @@ class ScipyOptimizer(Optimizer):
         raise AttributeError(f"Inverse Hessian not available for method '{self.method}'")
 
 from potentials import ASEPotentialEnergySurface
+from ase.optimize import BFGS, LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
 
 class ASEOptimizer(Optimizer):
     def __init__(self, abc_sim, optimizer_class='BFGS', **ase_optimizer_kwargs):
@@ -220,48 +229,183 @@ class ASEOptimizer(Optimizer):
         self._ase_optimizer = None
         self.accepted_positions = []
         self._last_accepted_pos = None
-        self._dummy_padding = 0
         self.convergence_threshold = None
-        self._current_atoms = None  # Track current ASE atoms object
+        self._current_atoms = None
+        self._result = None  # For consistency with ScipyOptimizer
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
-        from ase import Atoms
-        from ase.optimize import BFGS, LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
-        
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):        
         self._reset_state()
         self.accepted_positions = []
         self._last_accepted_pos = None
         self.convergence_threshold = convergence_threshold
-        
-        # Handle non-multiple-of-3 dimensions
-        remainder = len(x0) % 3
-        if remainder != 0:
-            self._dummy_padding = 3 - remainder
-            padded_x0 = np.concatenate([x0, np.zeros(self._dummy_padding)])
-            print(f"Warning: position vector length {len(x0)} is not divisible by 3. "
-                  f"Adding {self._dummy_padding} dummy dimensions (constant zeros).")
-        else:
-            self._dummy_padding = 0
-            padded_x0 = x0
 
-        # Setup atoms object
+        # Handle both regular and canonical PES cases
         if isinstance(self.abc_sim.potential, ASEPotentialEnergySurface):
-            atoms = deepcopy(self.abc_sim.potential.atoms)
-            atoms.set_positions(padded_x0.reshape(-1, 3))
-            atoms.calc = _ASECalculatorWrapper(self)
+            atoms = self.abc_sim.potential.atoms.copy()
+            atoms.set_positions(x0.reshape(-1, 3))
+        # elif hasattr(self.abc_sim.potential, 'atoms'):  # For canonical PES
+            # atoms = self.abc_sim.potential.atoms.copy()
+        #     atoms.set_positions(x0.reshape(-1, 3))
         else:
-            n_atoms = len(padded_x0) // 3
-            print(f"Warning: potential is not of type ASEPotentialEnergySurface. Creating dummy ASE Atoms with {n_atoms} particles")
-            atoms = Atoms('H' * n_atoms, positions=padded_x0.reshape(-1, 3))
-            atoms.calc = _ASECalculatorWrapper(self)
+            # Fallback for non-ASE potentials
+            from ase import Atoms
+            atoms = Atoms('H' * (len(x0)//3), positions=x0.reshape(-1, 3))
 
-        self._current_atoms = atoms  # Store for callback access
-        
-        # Initial evaluation (with original x0)
-        initial_energy, initial_forces = self._compute(x0)
+        atoms.calc = _ASECalculatorWrapper(self)
+        self._current_atoms = atoms
+
         self._register_accepted_step(x0)
 
-        # Select optimizer class
+        optimizer_mapping = {
+            'BFGS': BFGS,
+            'LBFGS': LBFGS,
+            'GPMin': GPMin,
+            'FIRE': FIRE,
+            'MDMin': MDMin,
+            'BFGSLineSearch': BFGSLineSearch,
+        }
+        
+        OptimizerClass = optimizer_mapping.get(self.optimizer_class, BFGS)
+        optimizer_kwargs = self.ase_optimizer_kwargs.copy()
+
+            
+        self._ase_optimizer = OptimizerClass(atoms, **optimizer_kwargs)
+
+        def callback():
+            current_pos = self._current_atoms.get_positions().flatten()
+            if (self._last_accepted_pos is None or 
+                not np.allclose(current_pos, self._last_accepted_pos, atol=1e-10)):
+                self._register_accepted_step(current_pos)
+
+        self._ase_optimizer.attach(callback)
+
+        try:
+            converged = self._ase_optimizer.run(
+                fmax=convergence_threshold if convergence_threshold else 0.05,
+                steps=max_steps if max_steps else 1000
+            )
+            message = "Optimization converged" if converged else "Optimization did not converge"
+        except Exception as e:
+            print(f"Optimization failed: {e}")
+            converged = False
+            message = str(e)
+
+        final_pos = self._current_atoms.get_positions().flatten()
+        self._compute(final_pos)
+        self._register_accepted_step(final_pos)
+
+        # Package result similar to ScipyOptimizer for consistency
+        self._result = {
+            'x': final_pos,
+            'success': converged,
+            'message': message,
+            'nit': len(self.accepted_positions),
+            'hess_inv': None  # ASE optimizers don't provide Hessian info
+        }
+        
+        return self._package_result()
+
+    def _package_result(self):
+        """Standardized result format matching ScipyOptimizer"""
+        if not hasattr(self, '_result'):
+            raise RuntimeError("Optimization not yet run")
+            
+        return {
+            'x': self._result['x'],
+            'converged': self._result['success'],
+            'nit': self._result['nit'],
+            'message': self._result['message']
+            # ASE doesn't provide Hessian information
+        }
+
+    def _register_accepted_step(self, pos):
+        self.accepted_positions.append(pos.copy())
+        self._last_accepted_pos = pos.copy()
+
+    def _accepted_steps(self):
+        return self.accepted_positions.copy()
+    
+from ase.calculators.calculator import Calculator, all_changes
+import numpy as np
+
+
+class _ASECalculatorWrapper(Calculator):
+    implemented_properties = ['energy', 'forces']
+    
+    def __init__(self, optimizer):
+        super().__init__()
+        self.optimizer = optimizer
+        self.results = {}
+
+    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
+        if atoms is None:
+            atoms = self.optimizer._current_atoms
+        
+        # Get current position and compute through ABC's cached _compute()
+        current_pos = atoms.get_positions().flatten()
+        energy, neg_grad = self.optimizer._compute(current_pos)
+        
+        # Store results in ASE-expected format
+        self.results = {
+            'energy': energy,
+            'forces': -neg_grad.reshape(-1, 3)  # ASE expects forces = -gradient
+        }
+        
+        super().calculate(atoms, properties, system_changes)
+
+    def get_potential_energy(self, atoms=None, **kwargs):
+        if atoms is not None:
+            self.calculate(atoms)
+        return self.results.get('energy', 0.0)
+
+    def get_forces(self, atoms=None, **kwargs):
+        if atoms is not None:
+            self.calculate(atoms)
+        return self.results.get('forces', np.zeros((len(atoms), 3)))
+
+    def get_stress(self, atoms=None, **kwargs):
+        # Dummy implementation required by some ASE optimizers
+        return np.zeros(6)
+    
+
+from potentials import CanonicalASEPES, internal_to_cartesian, cartesian_to_internal
+from ase.optimize import BFGS, LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
+    
+class CanonicalASEOptimizer(ASEOptimizer):
+    def __init__(self, abc_sim, optimizer_class='BFGS', **ase_optimizer_kwargs):
+        super().__init__(abc_sim, optimizer_class, **ase_optimizer_kwargs)
+        
+    def _setup_constraints(self, atoms):
+        """Apply constraints to maintain canonical frame during optimization"""
+        from ase.constraints import FixedCartesian, FixCartesian
+        
+        constraints = [
+            FixCartesian(0, [True, True, True]),   # Fix atom 0 completely
+            FixCartesian(1, [False, True, True]),  # Atom 1: only x movable
+        ]
+        
+        if len(atoms) > 2:
+            constraints.append(FixCartesian(2, [False, False, True]))  # Atom 2: x,y movable
+        
+        atoms.set_constraint(constraints)
+        return atoms
+    
+
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
+        # Convert internal to Cartesian
+        cartesian_pos = internal_to_cartesian(x0, self.abc_sim.potential.N, 
+                                            self.abc_sim.potential.k_soft)
+        
+        # Create and constrain atoms
+        atoms = self.abc_sim.potential.atoms.copy()
+        atoms.set_positions(cartesian_pos.reshape(-1, 3))
+        atoms = self._setup_constraints(atoms)
+        
+        # Use our specialized wrapper
+        atoms.calc = _CanonicalASECalculatorWrapper(self)
+        self._current_atoms = atoms
+
+        # Initialize optimizer
         optimizer_mapping = {
             'BFGS': BFGS,
             'LBFGS': LBFGS,
@@ -271,229 +415,220 @@ class ASEOptimizer(Optimizer):
             'BFGSLineSearch': BFGSLineSearch,
         }
         OptimizerClass = optimizer_mapping.get(self.optimizer_class, BFGS)
-
-        # Initialize optimizer
+        
         optimizer_kwargs = self.ase_optimizer_kwargs.copy()
+        if max_steps is not None:
+            optimizer_kwargs['steps'] = max_steps
+            
         self._ase_optimizer = OptimizerClass(atoms, **optimizer_kwargs)
 
-        # Callback for tracking accepted steps - NO COMPUTE CALLS HERE
+        # Track accepted steps
+        self.accepted_positions = []
+        self._last_accepted_pos = None
+        self._register_accepted_step(x0)
+
+        # Callback to track accepted steps
         def callback():
-            # Get position directly from ASE's internal state
-            current_padded_pos = self._current_atoms.get_positions().flatten()
-            
-            if self._dummy_padding > 0:
-                current_pos = current_padded_pos[:-self._dummy_padding]
-            else:
-                current_pos = current_padded_pos
-            
-            # Check if we've moved significantly
+            current_cart = self._current_atoms.get_positions().flatten()
+            current_internal = cartesian_to_internal(current_cart, self.abc_sim.potential.k_soft)
             if (self._last_accepted_pos is None or 
-                not np.allclose(current_pos, self._last_accepted_pos, atol=1e-10)):
-                self._register_accepted_step(current_pos)
+                not np.allclose(current_internal, self._last_accepted_pos, atol=1e-10)):
+                self._register_accepted_step(current_internal)
 
         self._ase_optimizer.attach(callback)
 
         # Run optimization
-        converged = False
         try:
-            if max_steps is not None:
-                converged = self._ase_optimizer.run(
-                    fmax=self.convergence_threshold, 
-                    steps=max_steps
-                )
-            else:
-                converged = self._ase_optimizer.run(
-                    fmax=self.convergence_threshold
-                )
+            converged = self._ase_optimizer.run(
+                fmax=convergence_threshold if convergence_threshold else 0.05,
+                steps=max_steps if max_steps else 1000
+            )
+            message = "Optimization converged" if converged else "Optimization did not converge"
         except Exception as e:
-            print(f"Optimization failed: {str(e)}")
+            print(f"Optimization failed: {e}")
             converged = False
+            message = str(e)
 
-        final_padded_pos = atoms.get_positions().flatten()
-        if self._dummy_padding > 0:
-            final_pos = final_padded_pos[:-self._dummy_padding]
-        else:
-            final_pos = final_padded_pos
-            
-        # Ensure final position is computed and recorded
-        self._compute(final_pos)
-        self._register_accepted_step(final_pos)
-        
-        # Verify convergence
-        # if converged and self.convergence_threshold is not None:
-        #     _, forces = self._compute(final_pos)
-        #     max_force = np.max(np.abs(forces))
-        #     if max_force > self.convergence_threshold * 1.1:
-        #         print(f"Warning: Optimizer reported convergence but max force ({max_force}) "
-        #               f"exceeds threshold ({self.convergence_threshold})")
-        #         converged = False
+        # Get final results
+        final_cart = self._current_atoms.get_positions().flatten()
+        final_internal = cartesian_to_internal(final_cart, self.abc_sim.potential.k_soft)
+        self._compute(final_internal)
+        self._register_accepted_step(final_internal)
 
-        return {
-            'x': final_pos,
-            'nsteps': len(self.accepted_positions),
-            'converged': converged,
-            'used_dummy_atoms': not isinstance(self.abc_sim.potential, ASEPotentialEnergySurface),
-            'used_dummy_dimensions': self._dummy_padding
+        # Package results
+        self._result = {
+            'x': final_internal,
+            'success': converged,
+            'message': message,
+            'nit': len(self.accepted_positions),
+            'hess_inv': None  # ASE doesn't provide Hessian info
         }
-    
-    def _register_accepted_step(self, pos):
-        """Register step without duplicating trajectory data"""
-        self.accepted_positions.append(pos.copy())
-        self._last_accepted_pos = pos.copy()
         
-        # Ensure this position is in our trajectory
-        # This will compute if needed, or use cached if already computed
-        self._compute(pos)
+        return self._package_result()
 
-    def _accepted_steps(self):
-        return self.accepted_positions.copy()
-
-from ase.calculators.calculator import Calculator, all_changes
-
-class _ASECalculatorWrapper(Calculator):
-    """ASE Calculator wrapper to interface your optimizer compute method."""
-
+class _CanonicalASECalculatorWrapper(Calculator):
     implemented_properties = ['energy', 'forces']
-
+    
     def __init__(self, optimizer):
         super().__init__()
         self.optimizer = optimizer
         self.results = {}
+        self.k_soft = optimizer.abc_sim.potential.k_soft
+        self.N = optimizer.abc_sim.potential.N
 
     def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
         if atoms is None:
             atoms = self.optimizer._current_atoms
-        padded_x = atoms.positions.flatten()
-        if self.optimizer._dummy_padding > 0:
-            x = padded_x[:-self.optimizer._dummy_padding]
-        else:
-            x = padded_x
-
-        energy, neg_grad = self.optimizer._compute(x)
-
-        if self.optimizer._dummy_padding > 0:
-            padded_grad = np.concatenate([neg_grad, np.zeros(self.optimizer._dummy_padding)])
-        else:
-            padded_grad = neg_grad
-
+        
+        # Get current Cartesian positions
+        current_cart = atoms.get_positions().flatten()
+        
+        # Convert to internal coordinates for energy/force computation
+        current_internal = cartesian_to_internal(current_cart, self.k_soft)
+        
+        # Get energy and forces in internal coordinates (3N-6 dimensional)
+        energy, neg_grad_internal = self.optimizer._compute(current_internal)
+        
+        # Convert internal forces back to Cartesian space
+        # 1. Create full 3N gradient with zeros for constrained dimensions
+        full_grad = np.zeros(3*self.N)
+        
+        # For N >= 2:
+        if self.N >= 2:
+            # Atom 1 x-component (constrained to be positive via softplus)
+            full_grad[3] = neg_grad_internal[0] * d_softplus_dx(current_internal[0], self.k_soft)
+            
+        # For N >= 3:
+        if self.N >= 3:
+            # Atom 2 x,y components
+            full_grad[6] = neg_grad_internal[1]  # x (unconstrained)
+            full_grad[7] = neg_grad_internal[2] * d_softplus_dx(current_internal[2], self.k_soft)  # y (softplus)
+            
+        # For N >= 4:
+        if self.N >= 4:
+            # Remaining atoms (x,y unconstrained, z softplus)
+            internal_idx = 3
+            for atom_idx in range(3, self.N):
+                # x component
+                full_grad[3*atom_idx] = neg_grad_internal[internal_idx]
+                # y component
+                full_grad[3*atom_idx+1] = neg_grad_internal[internal_idx+1]
+                # z component (softplus)
+                full_grad[3*atom_idx+2] = neg_grad_internal[internal_idx+2] * d_softplus_dx(current_internal[internal_idx+2], self.k_soft)
+                internal_idx += 3
+        
+        # Store results in ASE format (Cartesian forces)
         self.results = {
             'energy': energy,
-            'forces': -padded_grad.reshape(-1, 3)  # ASE forces = -gradient
+            'forces': -full_grad.reshape(-1, 3)  # ASE expects forces = -gradient
         }
+        
         super().calculate(atoms, properties, system_changes)
 
     def get_potential_energy(self, atoms=None, **kwargs):
-        if 'energy' not in self.results:
+        if atoms is not None:
             self.calculate(atoms)
-        return self.results.get('energy')
+        return self.results.get('energy', 0.0)
 
     def get_forces(self, atoms=None, **kwargs):
-        if 'forces' not in self.results:
+        if atoms is not None:
             self.calculate(atoms)
-        return self.results.get('forces')
+        return self.results.get('forces', np.zeros((self.N, 3)))
 
-class SimpleGradientDescent(Optimizer):
-    """The cheapest possible gradient descent optimizer"""
-    
-    def __init__(self, abc_sim, step_size=0.1):
+    def get_stress(self, atoms=None, **kwargs):
+        return np.zeros(6)
+
+class FIREOptimizer(Optimizer):
+    def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
+                 f_inc=1.05, f_dec=0.5, alpha_dec=0.95, max_steps=1000,
+                 f_tol=1e-4, max_step_size=0.05, velocity_damping=0.9):
+        """
+        - Smaller dt and dt_max for cautious steps
+        - Added max_step_size to clip max displacement per step
+        - velocity_damping applied every step to reduce momentum buildup
+        """
         super().__init__(abc_sim)
-        self.step_size = step_size
-        self._accepted_positions = []
-    
+        self.dt = dt
+        self.alpha = alpha
+        self.dt_max = dt_max
+        self.N_min = N_min
+        self.f_inc = f_inc
+        self.f_dec = f_dec
+        self.alpha_dec = alpha_dec
+        self.max_steps = max_steps
+        self.f_tol = f_tol
+        self.max_step_size = max_step_size
+        self.velocity_damping = velocity_damping
+
+        self.v = None
+        self.accepted_positions = []
+
     def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
         x = x0.copy()
-        self._accepted_positions = [x.copy()]
-        
+        self.v = np.zeros_like(x)
+        dt = self.dt
+        alpha = self.alpha
+        N_min = self.N_min
+        f_inc = self.f_inc
+        f_dec = self.f_dec
+        alpha_dec = self.alpha_dec
+        dt_max = self.dt_max
+        max_steps = max_steps or self.max_steps
+        f_tol = convergence_threshold or self.f_tol
+        max_step_size = self.max_step_size
+        velocity_damping = self.velocity_damping
+
+        n_pos = 0
+        self.accepted_positions = [x.copy()]
+
         for step in range(max_steps):
-            # Compute energy and forces (gradient is -force)
-            energy, gradient = self._compute(x)
-            
-            # Check convergence
-            if np.linalg.norm(gradient) < convergence_threshold:
+            energy, grad = self._compute(x)
+            force = -grad
+            fmax = np.max(np.abs(force))
+
+            if fmax < f_tol:
                 break
-                
-            # Take simple gradient descent step
-            x = x + self.step_size * gradient
-            self._accepted_positions.append(x.copy())
-            
+
+            self.v += dt * force
+
+            P = np.dot(force, self.v)
+            v_norm = np.linalg.norm(self.v)
+            f_norm = np.linalg.norm(force)
+            if f_norm > 1e-20 and v_norm > 1e-20:
+                self.v = (1 - alpha) * self.v + alpha * force * (v_norm / f_norm)
+
+            if P > 0:
+                n_pos += 1
+                if n_pos > N_min:
+                    dt = min(dt * f_inc, dt_max)
+                    alpha *= alpha_dec
+            else:
+                self.v[:] = 0
+                dt *= f_dec
+                alpha = self.alpha
+                n_pos = 0
+
+            # Apply velocity damping to reduce momentum buildup
+            self.v *= velocity_damping
+
+            # Proposed step
+            step_vec = dt * self.v
+
+            # Clip step size to max_step_size
+            step_norm = np.linalg.norm(step_vec)
+            if step_norm > max_step_size:
+                step_vec = step_vec / step_norm * max_step_size
+
+            x = x + step_vec
+            self.accepted_positions.append(x.copy())
+
+        converged = (fmax < f_tol)
         return {
             'x': x,
             'energy': energy,
-            'gradient': gradient,
-            'nsteps': step + 1,
-            'converged': step < max_steps - 1
-        }
-    
-    def _accepted_steps(self):
-        return self._accepted_positions
-    
-class FastLocalLBFGS(Optimizer):
-    def __init__(self, abc_sim, init_step_size=0.5, shrink_factor=0.5, **kwargs):
-        """
-        Accelerated local optimizer that:
-        1. Uses L-BFGS-B for fast convergence within basins
-        2. Dynamically shrinks steps that would escape the basin
-        3. Auto-resets step size after successful steps
-        """
-        super().__init__(abc_sim)
-        self.init_step_size = init_step_size  # Initial trust region size
-        self.shrink_factor = shrink_factor    # How aggressively to clip escaping steps
-        self.optimizer_kwargs = kwargs
-        self.accepted_steps = []
-
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
-        self._reset_state()
-        self.accepted_steps = [x0.copy()]
-        x = x0.copy()
-        current_step_size = self.init_step_size
-        
-        options = self.optimizer_kwargs.copy()
-        if max_steps is not None:
-            options['maxiter'] = max_steps
-
-        for _ in range(max_steps or 1000):
-            # Run L-BFGS-B with step control
-            result = minimize(
-                fun=lambda x: self._compute(x)[0],
-                x0=x,
-                method='L-BFGS-B',
-                jac=lambda x: self._compute(x)[1],
-                tol=convergence_threshold,
-                options={**options, 'maxls': 20},  # Limit line searches
-                callback=self._adaptive_step_callback
-            )
-            
-            proposed_x = result.x
-            step = proposed_x - x
-            step_norm = np.linalg.norm(step)
-            
-            # Accept step only if it doesn't exceed current trust region
-            if step_norm <= current_step_size:
-                x = proposed_x
-                current_step_size = self.init_step_size  # Reset trust region
-            else:
-                x = x + (step / step_norm) * current_step_size
-                current_step_size *= self.shrink_factor  # Shrink trust region
-            
-            self.accepted_steps.append(x.copy())
-            
-            # Check convergence
-            _, grad = self._compute(x)
-            if np.linalg.norm(grad) < (convergence_threshold or 1e-6):
-                break
-
-        return {
-            'x': x,
-            'energy': self._compute(x)[0],
-            'gradient': grad,
-            'nsteps': len(self.accepted_steps),
-            'converged': np.linalg.norm(grad) < (convergence_threshold or 1e-6)
+            'converged': converged,
+            'nsteps': step + 1
         }
 
-    def _adaptive_step_callback(self, xk):
-        """Track steps without slowing down L-BFGS-B"""
-        if not np.allclose(xk, self.accepted_steps[-1]):
-            self.accepted_steps.append(xk.copy())
-
     def _accepted_steps(self):
-        return self.accepted_steps.copy()
+        return self.accepted_positions.copy()

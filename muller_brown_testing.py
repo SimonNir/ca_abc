@@ -18,27 +18,30 @@ def run_2d_simulation():
         curvature_method="BFGS",
 
         perturb_type="random",
-        default_perturbation_size=0.1,
+        default_perturbation_size=0.01,
      
         bias_height_type="fixed",
-        default_bias_height=1,
+        default_bias_height=2,
         min_bias_height= 0.5,
         max_bias_height= 3,
         curvature_bias_height_scale=100,
 
         bias_covariance_type="fixed",
-        default_bias_covariance=0.01,
+        default_bias_covariance=0.05,
         min_bias_covariance= 0.005,
         max_bias_covariance= 0.015,
         curvature_bias_covariance_scale=10,
         
-        max_descent_steps=1000,
+        max_descent_steps=300,
         descent_convergence_threshold=1e-5, 
-        max_acceptable_force_mag=1e5
+        max_acceptable_force_mag=1e99,
+        remove_rotation_translation=False,
     )
     
-    opt = ScipyOptimizer(abc, 'BFGS')    
-    abc.run(max_iterations=200, optimizer=opt, verbose=True)
+    opt = ScipyOptimizer(abc, 'L-BFGS-B')  
+    opt = ConservativeFIREOptimizer(abc)  
+    # opt = SimpleGradientDescent(abc, 1e-6)
+    abc.run(max_iterations=300, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)

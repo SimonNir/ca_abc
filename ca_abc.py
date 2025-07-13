@@ -35,7 +35,6 @@ class CurvatureAdaptiveABC:
         curvature_perturbation_scale = 1.0,
         
         # Biasing strategy
-        remove_rotation_translation = True, 
         bias_height_type ="adaptive",
         bias_covariance_type = "adaptive",
         default_bias_height = 1.0,
@@ -69,8 +68,6 @@ class CurvatureAdaptiveABC:
 
         self.dump_every = dump_every
         self.dump_folder = dump_folder 
-
-        self.remove_rotation_translation=remove_rotation_translation
 
          # Initialize state variables
         self.reset(starting_position)
@@ -121,10 +118,6 @@ class CurvatureAdaptiveABC:
         self.saddles = []
 
         self.dimension = len(self.position)
-        if self.dimension % 3 !=0 and self.remove_rotation_translation:
-            print("remove_rotation_translation=True is incompatible with potentials without 3N cartesian dimensions; setting to False.")
-            self.remove_rotation_translation=False
-
         self.most_recent_hessian = None 
 
         self.current_iteration = 0
@@ -185,72 +178,9 @@ class CurvatureAdaptiveABC:
         self.current_iteration += 1
 
     # Core functionality (adapted from TraditionalABC with enhancements)
-
-    def kabsch(self, pos, ref):
-        pos = np.array(pos).reshape(-1, 3)
-        ref = np.array(ref).reshape(-1, 3)
-
-        # Subtract centroids
-        pos_centroid = pos.mean(axis=0)
-        ref_centroid = ref.mean(axis=0)
-        pos_centered = pos - pos_centroid
-        ref_centered = ref - ref_centroid
-
-        # Compute covariance matrix
-        H = pos_centered.T @ ref_centered
-
-        # SVD
-        U, S, Vt = np.linalg.svd(H)
-        R = Vt.T @ U.T
-
-        # Correct improper rotation (reflection)
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = Vt.T @ U.T
-
-        # Rotate and translate pos to align with ref
-        aligned = (pos_centered @ R) + ref_centroid
-
-        return aligned.reshape(-1)
-
-    def canonicalize(self, position):
-        if len(self.trajectory) == 0:
-            position = np.array(position).reshape(-1,3)
-            position -= np.mean(position, axis=0)
-            return position.flatten() 
-        else:
-            # Kabsch alignment to the first structure in trajectory
-            ref = np.array(self.trajectory[0]).reshape(-1, 3)
-            mobile = np.array(position).reshape(-1, 3)
-
-            # Subtract centroids
-            ref_centroid = ref.mean(axis=0)
-            mobile_centroid = mobile.mean(axis=0)
-            ref_centered = ref - ref_centroid
-            mobile_centered = mobile - mobile_centroid
-
-            # Compute covariance matrix
-            H = mobile_centered.T @ ref_centered
-
-            # SVD
-            U, S, Vt = np.linalg.svd(H)
-            R = Vt.T @ U.T
-
-            # Correct improper rotation (reflection)
-            if np.linalg.det(R) < 0:
-                Vt[-1, :] *= -1
-                R = Vt.T @ U.T
-
-            # Rotate and translate mobile to align with ref
-            aligned = (mobile_centered @ R) + ref_centroid
-
-            return aligned.reshape(-1)
     
     def compute_biased_potential(self, position, unbiased: float = None) -> float:
         """Fully vectorized potential computation with empty bias list handling."""
-
-        if self.remove_rotation_translation:
-            position = self.canonicalize(position)
 
         V = self.potential.potential(position) if unbiased is None else unbiased
         
@@ -263,8 +193,10 @@ class CurvatureAdaptiveABC:
         covs = np.stack([np.atleast_2d(b.covariance) for b in self.bias_list])  # Ensure each covariance is 2D
         heights = np.array([b.height for b in self.bias_list])
         
+        position = np.atleast_1d(position).reshape(1, -1)  # shape (1, d)
         diffs = position - centers
         inv_covs = np.linalg.inv(covs)
+
         exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
         V += np.sum(heights * np.exp(exponents))
         
@@ -272,9 +204,6 @@ class CurvatureAdaptiveABC:
 
     def compute_biased_force(self, position, unbiased: np.ndarray = None, eps=1e-5) -> np.ndarray:
         """Fully vectorized force computation with empty bias list handling."""
-
-        if self.remove_rotation_translation:
-            position = self.canonicalize(position)
 
         if unbiased is None:
             try:
@@ -305,8 +234,10 @@ class CurvatureAdaptiveABC:
         covs = np.stack([np.atleast_2d(b.covariance) for b in self.bias_list])  # Ensure each covariance is 2D
         heights = np.array([b.height for b in self.bias_list])
         
+        position = np.atleast_1d(position).reshape(1, -1)  # shape (1, d)
         diffs = position - centers                      # shape (N, D)
         inv_covs = np.linalg.inv(covs)                 # shape (N, D, D)
+        
         exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
         mv_products = np.einsum('nij,nj->ni', inv_covs, diffs)  # shape (N, D)
         grads = -mv_products * (heights * np.exp(exponents))[:, None]  # shape (N, D)
@@ -361,9 +292,6 @@ class CurvatureAdaptiveABC:
             height: Height of the bias.
         """
         pos = center if center is not None else self.position.copy()
-
-        if self.remove_rotation_translation:
-            pos = self.canonicalize(pos)
             
         # if verbose:
         #     print('Bias position:', pos)
@@ -374,7 +302,7 @@ class CurvatureAdaptiveABC:
             if self.bias_height_type == "adaptive":
                 _, curvature = self.get_softest_hessian_mode(center)
                 # print("softest curvature:", curvature)
-                h = self.curvature_bias_height_scale * curvature
+                h = self.curvature_bias_height_scale * np.abs(curvature)
             else: 
                 # Fall back to defaults
                 h = self.default_bias_height
@@ -471,7 +399,10 @@ class CurvatureAdaptiveABC:
             self.biased_forces.extend(biased_f)
 
             self.position = final_pos.copy()
-            message = result['message']
+            if 'message' in result: 
+                message = result['message']
+            else: 
+                message = ''
             # print('attempt:', attempt)
             # print('force:', self.biased_forces[-1])
             attempt += 1 
@@ -480,6 +411,7 @@ class CurvatureAdaptiveABC:
                 print(result['message'] if 'message' in result else None)
 
         # Process curvature and check minimum (same as before)
+        # print(hess_inv)
         self._process_curvature_info(final_pos, hess_inv)
 
         # check_min = check_min and not (np.all(np.isclose(self.position, self.trajectory[0], 3)))
@@ -648,6 +580,8 @@ class CurvatureAdaptiveABC:
             self.deposit_bias(pos, verbose=verbose)
                 
             self.update_records()
+
+            print("hessian:", self.most_recent_hessian)
                 
             if verbose:
                 print(f"Iteration {iteration+1}/{max_iterations}: "

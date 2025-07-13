@@ -265,7 +265,7 @@ class LennardJonesCluster(ASEPotentialEnergySurface):
 
         # Create atoms and assign calculator
         atoms = Atoms('X' * num_atoms, positions=initial_positions, pbc=False)
-        atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=3 * sigma, smooth=True)
+        atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=300*sigma, smooth=False)
 
         super().__init__(atoms, None)
 
@@ -280,14 +280,7 @@ class LennardJonesCluster(ASEPotentialEnergySurface):
         """Generate valid initial positions inside the bounding box."""
         positions = []
         attempts = 0
-        while len(positions) < self.num_atoms:
-            trial = np.random.uniform(-self.half_box, self.half_box, 3)
-            if all(np.linalg.norm(trial - np.array(p)) >= self.min_distance for p in positions):
-                positions.append(trial)
-            attempts += 1
-            if attempts > 5000:
-                raise RuntimeError("Failed to generate non-overlapping initial positions.")
-        positions = np.array(positions)
+        positions = uniform_sphere_points(self.num_atoms)
         positions -= positions.mean(axis=0)  # Center cluster
         return positions.flatten()
 
@@ -302,7 +295,7 @@ class LennardJonesCluster(ASEPotentialEnergySurface):
         """Compute gradient at given position using ASE."""
         self.atoms.positions = position.reshape(-1, 3)
         # ASE returns forces, which are negative gradients
-        forces = self.atoms.get_forces() - self._boundary_penalty_gradient(position.reshape(-1, 3))
+        forces = self.atoms.get_forces() + self._boundary_penalty_gradient(position.reshape(-1, 3))
         return -forces.flatten() # Flatten to match your 'position' input shape
 
     def _boundary_penalty(self, positions):
@@ -338,5 +331,203 @@ class LennardJonesCluster(ASEPotentialEnergySurface):
     def known_saddles(self):
         return []
     
-class InvariantLennardJones(PotentialEnergySurface):
-    
+
+import numpy as np
+from ase import Atoms
+from ase.calculators.lj import LennardJones
+from potentials import PotentialEnergySurface  # Replace with your actual PES base class path
+
+# === Softplus and Derivatives ===
+def softplus(x, k=10):
+    return np.where(x > 50/k, x, np.log1p(np.exp(k * x)) / k)
+
+def d_softplus_dx(x, k=10):
+    return 1 / (1 + np.exp(-k * x))
+
+def inverse_softplus(y, k=10):
+    return np.where(y > 50/k, y, np.log(np.exp(k * y) - 1) / k)
+
+# === Coordinate Transforms ===
+def internal_to_cartesian(x_internal, N, k=10):
+    pos = np.zeros((N, 3))
+
+    if N == 2:
+        # Atom 0 at origin, atom 1 at (softplus(x), 0, 0)
+        pos[1, 0] = softplus(x_internal[0], k)
+        return pos
+
+    if N == 3:
+        pos[1, 0] = softplus(x_internal[0], k)
+        pos[2, 0] = x_internal[1]
+        pos[2, 1] = softplus(x_internal[2], k)
+        return pos
+
+    # General case
+    pos[1, 0] = softplus(x_internal[0], k)
+    pos[2, 0] = x_internal[1]
+    pos[2, 1] = softplus(x_internal[2], k)
+
+    rest = x_internal[3:].reshape(-1, 3)
+    pos[3:, :2] = rest[:, :2]
+    pos[3:, 2] = softplus(rest[:, 2], k)
+
+    return pos
+
+def cartesian_to_internal(pos, k=10):
+    N = len(pos)
+    x_internal = []
+
+    if N == 2:
+        x_internal.append(inverse_softplus(pos[1, 0], k))
+        return np.array(x_internal)
+
+    if N == 3:
+        x_internal.append(inverse_softplus(pos[1, 0], k))
+        x_internal.append(pos[2, 0])
+        x_internal.append(inverse_softplus(pos[2, 1], k))
+        return np.array(x_internal)
+
+    # General case
+    x_internal.append(inverse_softplus(pos[1, 0], k))
+    x_internal.append(pos[2, 0])
+    x_internal.append(inverse_softplus(pos[2, 1], k))
+
+    rest = pos[3:]
+    x = rest[:, 0]
+    y = rest[:, 1]
+    z = inverse_softplus(rest[:, 2], k)
+    internal_rest = np.stack([x, y, z], axis=1).reshape(-1)
+    x_internal.extend(internal_rest)
+
+    return np.array(x_internal)
+
+# === Uniform Sphere Sampling and Canonical Alignment ===
+def uniform_sphere_points(n):
+    indices = np.arange(0, n) + 0.5
+    phi = np.arccos(1 - 2 * indices / n)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
+    x = np.cos(theta) * np.sin(phi)
+    y = np.sin(theta) * np.sin(phi)
+    z = np.cos(phi)
+    return np.vstack((x, y, z)).T
+
+def align_to_canonical(positions):
+    positions = positions - positions[0]  # atom 0 to origin
+
+    v1 = positions[1]
+    e1 = v1 / np.linalg.norm(v1)
+
+    def rotation_matrix_from_vectors(vec1, vec2):
+        a = vec1 / np.linalg.norm(vec1)
+        b = vec2 / np.linalg.norm(vec2)
+        v = np.cross(a, b)
+        c = np.dot(a, b)
+        if np.isclose(c, -1.0):
+            orth = np.array([1, 0, 0])
+            if (a == orth).all():
+                orth = np.array([0, 1, 0])
+            v = np.cross(a, orth)
+            v = v / np.linalg.norm(v)
+            return -np.eye(3) + 2 * np.outer(v, v)
+        elif np.isclose(c, 1.0):
+            return np.eye(3)
+        s = np.linalg.norm(v)
+        K = np.array([
+            [0, -v[2], v[1]],
+            [v[2], 0, -v[0]],
+            [-v[1], v[0], 0]
+        ])
+        return np.eye(3) + K + K @ K * ((1 - c) / (s ** 2))
+
+    R1 = rotation_matrix_from_vectors(e1, np.array([1, 0, 0]))
+    positions = positions @ R1.T
+
+    v2 = positions[2]
+    v2_proj = np.array([v2[0], v2[1], 0])
+    norm_proj = np.linalg.norm(v2_proj)
+    if norm_proj < 1e-8:
+        v2_proj = np.array([0, 1e-6, 0])
+        norm_proj = 1e-6
+    v2_proj /= norm_proj
+    angle = np.arctan2(v2[2], np.dot(v2, v2_proj))
+    Rx = np.array([
+        [1, 0, 0],
+        [0, np.cos(-angle), -np.sin(-angle)],
+        [0, np.sin(-angle),  np.cos(-angle)]
+    ])
+    positions = positions @ Rx.T
+
+    if positions[2, 1] < 0:
+        positions[:, 1] = -positions[:, 1]
+    if len(positions) > 3 and positions[3, 2] < 0:
+        positions[:, 2] = -positions[:, 2]
+
+    return positions
+
+# === Canonical PES Class ===
+class CanonicalASEPES(PotentialEnergySurface):
+    def __init__(self, atoms, k_soft=10):
+        super().__init__()
+        self.atoms = atoms.copy()
+        self.atoms.calc = atoms.calc
+        self.N = len(atoms)
+        self.k_soft = k_soft
+
+    def _potential(self, x_internal):
+        pos = internal_to_cartesian(x_internal, self.N, self.k_soft)
+        self.atoms.positions = pos
+        return self.atoms.get_potential_energy()
+
+    def _gradient(self, x_internal):
+        pos = internal_to_cartesian(x_internal, self.N, self.k_soft)
+        self.atoms.positions = pos
+        forces = self.atoms.get_forces()
+        grad_full = -forces
+        grad = np.zeros_like(x_internal)
+
+        if self.N == 2:
+            grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
+            return grad
+
+        if self.N == 3:
+            grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
+            grad[1] = grad_full[2, 0]
+            grad[2] = grad_full[2, 1] * d_softplus_dx(x_internal[2], self.k_soft)
+            return grad
+
+        # General case
+        grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
+        grad[1] = grad_full[2, 0]
+        grad[2] = grad_full[2, 1] * d_softplus_dx(x_internal[2], self.k_soft)
+
+        rest = x_internal[3:].reshape(-1, 3)
+        d_sp = d_softplus_dx(rest[:, 2], self.k_soft)
+        grad_rest = np.zeros_like(rest)
+        grad_rest[:, 0] = grad_full[3:, 0]
+        grad_rest[:, 1] = grad_full[3:, 1]
+        grad_rest[:, 2] = grad_full[3:, 2] * d_sp
+        grad[3:] = grad_rest.reshape(-1)
+
+        return grad
+
+# === Lennard-Jones Cluster in Canonical Frame ===
+class CanonicalLennardJonesCluster(CanonicalASEPES):
+    def __init__(self, num_atoms, sigma=1.0, epsilon=1.0, rc=30.0, k_soft=10):
+        self.num_atoms = num_atoms
+        self.sigma = sigma
+        self.epsilon = epsilon
+        self.k_soft = k_soft
+
+        atoms = Atoms('X' * num_atoms, pbc=False)
+        atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=rc, smooth=True)
+
+        super().__init__(atoms, k_soft=k_soft)
+        self.initial_coords = self.default_starting_position()
+
+    def default_starting_position(self):
+        N = self.num_atoms
+        radius = 1.1 * self.sigma * N ** (1/3)
+        points = uniform_sphere_points(N)
+        points *= radius
+        aligned = align_to_canonical(points)
+        return cartesian_to_internal(aligned, k=self.k_soft)

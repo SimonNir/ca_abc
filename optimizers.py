@@ -537,6 +537,76 @@ class _CanonicalASECalculatorWrapper(Calculator):
 
     def get_stress(self, atoms=None, **kwargs):
         return np.zeros(6)
+    
+
+def manual_bfgs_inverse_hessian(positions, forces):
+    """
+    Approximates the inverse Hessian at the final position using BFGS updates.
+
+    Parameters:
+    - positions: list of np.ndarray of shape (n,)
+    - forces: list of np.ndarray of shape (n,) (assumed to be negative gradients)
+
+    Returns:
+    - H: np.ndarray of shape (n, n), the approximate inverse Hessian
+    """
+    if len(positions) != len(forces):
+        raise ValueError("positions and forces must be the same length")
+    if len(positions) < 2:
+        raise ValueError("Need at least two position-force pairs")
+
+    n = positions[0].shape[0]
+    H = np.eye(n)  # initial inverse Hessian
+
+    for i in range(len(positions) - 1):
+        s = positions[i+1] - positions[i]       # step
+        y = -(forces[i+1] - forces[i])             # gradient difference (grad = -force)
+        
+        ys = np.dot(y, s)
+        if ys <= 1e-50:
+            # print(ys)
+            # Skip update if curvature condition fails
+            # print("curvature condition not satisfied; hess_inv update skipped")
+            if ys > 0: 
+                print(f"Hessian Update Warning: ys of {ys} skipped for being too small in magnitude")
+            continue
+        
+        rho = 1.0 / ys
+        I = np.eye(n)
+        Hy = H @ y
+        outer_ss = np.outer(s, s)
+        outer_sy = np.outer(s, y)
+        outer_ys = np.outer(y, s)
+        outer_Hy_yH = np.outer(Hy, Hy)
+
+        H = (I - rho * outer_sy) @ H @ (I - rho * outer_ys) + rho * outer_ss
+
+    return H
+
+import numpy as np
+from scipy.optimize._hessian_update_strategy import BFGS
+
+def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
+    if len(positions) != len(forces):
+        raise ValueError("positions and forces must have the same length")
+    if len(positions) < 2:
+        raise ValueError("Need at least two position-force pairs")
+
+    n = positions[0].shape[0]
+    updater = BFGS(exception_strategy='skip_update', init_scale='auto')
+    updater.initialize(n, approx_type='inv_hess')  # inverse Hessian approx
+
+    if assume_forces_are_neg_grads:
+        grads = [-f for f in forces]
+    else:
+        grads = forces
+
+    for i in range(len(positions) - 1):
+        s = positions[i+1] - positions[i]
+        y = grads[i+1] - grads[i]
+        updater.update(s, y)
+
+    return updater.get_matrix()
 
 class FIREOptimizer(Optimizer):
     def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
@@ -623,12 +693,17 @@ class FIREOptimizer(Optimizer):
             self.accepted_positions.append(x.copy())
 
         converged = (fmax < f_tol)
+
+        hess_inv = bfgs_inverse_hessian(self.trajectory.copy(), self.biased_forces.copy())
+
         return {
             'x': x,
             'energy': energy,
             'converged': converged,
-            'nsteps': step + 1
+            'nsteps': step + 1,
+            'hess_inv': hess_inv
         }
 
     def _accepted_steps(self):
         return self.accepted_positions.copy()
+

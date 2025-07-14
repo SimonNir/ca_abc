@@ -45,6 +45,7 @@ class CurvatureAdaptiveABC:
         max_bias_covariance = None,
         curvature_bias_height_scale=1.0, 
         curvature_bias_covariance_scale=1.0, 
+        bias_delta = 1,
         
         # Descent and optimization
         descent_convergence_threshold=1e-5,
@@ -83,6 +84,7 @@ class CurvatureAdaptiveABC:
         self.min_bias_height = min_bias_height
         self.max_bias_height = max_bias_height
         self.curvature_bias_height_scale = curvature_bias_height_scale
+        self.bias_delta = bias_delta 
 
         
         self.bias_covariance_type = bias_covariance_type
@@ -122,6 +124,8 @@ class CurvatureAdaptiveABC:
 
         self.current_iteration = 0
         self.iter_periods = [] 
+        self.energy_calls = []
+        self.force_calls = []
 
    
     def store_to_disk(self):
@@ -250,39 +254,38 @@ class CurvatureAdaptiveABC:
         
         return force
     
-    def compute_hessian_finite_difference(self, position, eps=1e-3, f0_already_computed=False):
+    def compute_hessian_finite_difference(self, position, f0_already_computed=False, eps=1e-3):
+        """
+        Compute the Hessian matrix of the potential at a given position using
+        central differences on the force (which is assumed to be -∇V).
+        
+        Returns:
+            hessian: ndarray of shape (n, n), Hessian matrix of the potential
+        """
         n = len(position)
         hessian = np.zeros((n, n))
-        if f0_already_computed:
-            f0 = self.biased_forces[-1]
-        else: 
-            f0 = self.compute_biased_force(position)  # Cache f(position)
+        unit = np.eye(n)
         
-        # Cache forces at position + eps * e_i for all i
-        f_i_cache = np.zeros((n, n))
-        for i in range(n):
-            delta_i = np.zeros(n)
-            delta_i[i] = eps
-            f_i_cache[i] = self.compute_biased_force(position + delta_i)
-        
-        # Compute upper triangle and diagonal
-        for i in range(n):
-            for j in range(i, n):
-                delta_i = np.zeros(n)
-                delta_j = np.zeros(n)
-                delta_i[i] = eps
-                delta_j[j] = eps
+        # Central difference: dF_i/dx_j ≈ [F_i(x+e_j) - F_i(x-e_j)] / (2*eps)
+        for j in range(n):
+            # Displace along dimension j
+            pos_plus = position + eps * unit[j]
+            pos_minus = position - eps * unit[j]
+            
+            f_plus = self.compute_biased_force(pos_plus)  # shape (n,)
+            f_minus = self.compute_biased_force(pos_minus)
+            
+            # For each i, compute dF_i/dx_j
+            df_dxj = (f_plus - f_minus) / (2 * eps)
+            
+            # Hessian_ij = -dF_i/dx_j
+            hessian[:, j] = -df_dxj  # column j
 
-                f_ij = self.compute_biased_force(position + delta_i + delta_j)
-                
-                # Use cached f_i and f_j
-                val = (f_ij[i] - f_i_cache[i][i] - f_i_cache[j][j] + f0[i]) / (eps ** 2)
-                hessian[i, j] = val
-                if i != j:
-                    hessian[j, i] = val  # Exploit symmetry
+        # Force-symmetric Hessian
+        hessian = 0.5 * (hessian + hessian.T)
+        return hessian
 
-        return -hessian  # negative because working with -∇V
-    
+
     def deposit_bias(self, center: np.ndarray = None, covariance: float|np.ndarray = None, height: float = None, verbose=False):
         """Deposit a new Gaussian bias potential.
 
@@ -303,10 +306,12 @@ class CurvatureAdaptiveABC:
                 _, curvature = self.get_softest_hessian_mode(center)
                 # print("softest curvature:", curvature)
                 h = self.curvature_bias_height_scale * np.abs(curvature)
+                # Try also just using height from prior descent / barrier 
             else: 
                 # Fall back to defaults
                 h = self.default_bias_height
 
+        # note that this still works when min_height and/or max_height are set to None; just returns the original height 
         min_height = self.min_bias_height # or self.default_bias_height/2
         max_height = self.max_bias_height # or self.default_bias_height*2
         clipped_h = np.clip(h, min_height, max_height)
@@ -321,10 +326,15 @@ class CurvatureAdaptiveABC:
             # Smart bias scaling based on curvature if available
             if self.bias_covariance_type == "adaptive":
                     # Scale covariance by inverse curvature
-                    if self.most_recent_hessian is not None  and not np.any(np.isnan(self.most_recent_hessian)): 
-                        cov = self.curvature_bias_covariance_scale * np.linalg.inv(
+                    if self.most_recent_hessian is not None and not np.any(np.isnan(self.most_recent_hessian)):
+                        cov = np.linalg.inv(
                             self.make_positive_definite(self.most_recent_hessian)
                         )
+                        # if not (np.all(cov>1e-8) and np.all(cov<1e8)):
+                        #     if verbose:
+                        #         print("ill-conditioned hessian or inverse; reverting to default bias cov")
+                        #         print("Hessian:", (self.most_recent_hessian))
+                        #     cov = self.default_bias_covariance
                     else:
                         raise RuntimeError("Adaptive mode selected, but Hessian is none or nan")
             else:
@@ -333,19 +343,27 @@ class CurvatureAdaptiveABC:
         # 1. Get eigenvalues/vectors - ensure proper matrix shapes
         eigvals, eigvecs = np.linalg.eigh(cov)  # Use built-in SVD for stability
 
-        # 2. Clip eigenvalues properly
-        min_variance = self.min_bias_covariance # or np.min(np.diag(self.default_bias_covariance)) / 2
-        max_variance = self.max_bias_covariance # or np.max(np.diag(self.default_bias_covariance)) * 2
-        clipped_eigvals = np.clip(eigvals, min_variance, max_variance)
+        # Regularize soft modes (to avoid huge variance)
+        eigvals = np.maximum(eigvals, 1e-6)
 
+        # Covariance eigenvalues from: σ² = height / curvature
+        if self.bias_covariance_type == "adaptive":
+            var_along_modes = clipped_h*self.bias_delta / eigvals
+        else:
+            var_along_modes = eigvals
+
+        # Clip variance range
+        min_variance = self.min_bias_covariance
+        max_variance = self.max_bias_covariance
+        clipped_eigvals = np.clip(var_along_modes, min_variance, max_variance)
 
         # 3. Reconstruct with dimension guarantees
         n = len(eigvals)
         if verbose and self.bias_covariance_type.lower() =="adaptive":
-            n_clipped = np.sum((eigvals != clipped_eigvals))
-            print(f"Eigenvalues clipped: {n_clipped} / {n}")
-            print("Original eigvals:", eigvals)
-            print("Clipped eigvals:", clipped_eigvals)   
+            # n_clipped = np.sum((eigvals != clipped_eigvals))
+            # print(f"Eigenvalues clipped: {n_clipped} / {n}")
+            print("Original var:", var_along_modes)
+            print("Clipped var:", clipped_eigvals)   
 
         clipped_cov = eigvecs @ np.diag(clipped_eigvals) @ eigvecs.T
 
@@ -371,6 +389,47 @@ class CurvatureAdaptiveABC:
         if verbose and self.bias_covariance_type.lower() == "adaptive":
             approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
             print("Approximate bias volume:", approx_vol)
+
+    def approximate_inverse_hessian(self, positions, forces):
+        """
+        Approximates the inverse Hessian at the final position using BFGS.
+        
+        Parameters:
+        - positions: list of np.ndarray, each of shape (n,)
+        - forces: list of np.ndarray, each of shape (n,)
+                Forces should be negative gradients.
+
+        Returns:
+        - H: np.ndarray of shape (n, n), the approximate inverse Hessian at the final position.
+        """
+        if len(positions) != len(forces):
+            raise ValueError("positions and forces must be of the same length")
+        if len(positions) < 2:
+            raise ValueError("Need at least two position-force pairs to build an approximation")
+
+        n = positions[0].shape[0]
+        H = np.eye(n)  # Initial inverse Hessian approximation
+
+        for i in range(len(positions) - 1):
+            x_k = positions[i]
+            x_next = positions[i + 1]
+            f_k = forces[i]
+            f_next = forces[i + 1]
+
+            s = x_next - x_k                   # position difference
+            y = f_next - f_k                   # force difference
+            ys = np.dot(y, s)
+
+            if ys < 1e-10:
+                # skip this update, avoid divide by near-zero or negative curvature
+                continue
+
+            rho = 1.0 / ys
+            I = np.eye(n)
+            V = I - rho * np.outer(s, y)
+            H = V @ H @ V.T + rho * np.outer(s, s)
+
+        return H
 
     def descend(self, max_steps=None, convergence_threshold=None):
         """
@@ -416,6 +475,11 @@ class CurvatureAdaptiveABC:
 
         # check_min = check_min and not (np.all(np.isclose(self.position, self.trajectory[0], 3)))
 
+        # print("My quasi-newton:", self.approximate_inverse_hessian(traj.copy(),biased_f.copy()))
+        # from optimizers import bfgs_inverse_hessian
+        # print("Accepted only hessian:", bfgs_inverse_hessian(traj, biased_f))
+
+
         self._check_minimum(converged, final_pos)
 
         return converged
@@ -430,7 +494,7 @@ class CurvatureAdaptiveABC:
                 f0_already_computed=True
             )
         elif self.curvature_method.lower() == "bfgs" and hess_inv is not None:
-            self.most_recent_hessian = np.linalg.inv(hess_inv)
+            self.most_recent_hessian = np.linalg.inv(self.make_positive_definite(self.symmetrize(hess_inv)))
 
     def _check_minimum(self, converged, final_pos):
         """Check if the final position is a minimum."""
@@ -463,17 +527,46 @@ class CurvatureAdaptiveABC:
             #     # else:
             #     self.minima.append(final_pos.copy())
 
-        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/100):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/50):
             pos = final_pos.copy()
             # check if RMSD < threshold 
             diff_threshold = 1
 
+            def kabsch(pos, ref):
+                pos = np.array(pos).reshape(-1, 3)
+                ref = np.array(ref).reshape(-1, 3)
+
+                # Subtract centroids
+                pos_centroid = pos.mean(axis=0)
+                ref_centroid = ref.mean(axis=0)
+                pos_centered = pos - pos_centroid
+                ref_centered = ref - ref_centroid
+
+                # Compute covariance matrix
+                H = pos_centered.T @ ref_centered
+
+                # SVD
+                U, S, Vt = np.linalg.svd(H)
+                R = Vt.T @ U.T
+
+                # Correct improper rotation (reflection)
+                if np.linalg.det(R) < 0:
+                    Vt[-1, :] *= -1
+                    R = Vt.T @ U.T
+
+                # Rotate and translate pos to align with ref
+                aligned = (pos_centered @ R) + ref_centroid
+
+                return aligned.reshape(-1)
+
             def rmsd(struc, ref):
-                diff = self.kabsch(struc, ref).reshape(-1, 3) - ref.reshape(-1, 3)
+                diff = kabsch(struc, ref).reshape(-1, 3) - ref.reshape(-1, 3)
                 return np.sqrt(np.mean(np.sum(diff**2, axis=1)))
 
             if self.dimension % 3 != 0 or not any([rmsd(pos, minim) < diff_threshold for minim in self.minima]):
                 self.minima.append(final_pos.copy())
+                self.energy_calls.append(self.potential.energy_calls)
+                self.force_calls.append(self.potential.force_calls)
                 
 
     
@@ -525,17 +618,39 @@ class CurvatureAdaptiveABC:
         eigvals, eigvecs = np.linalg.eigh(H)
         eigvals_mod = np.clip(eigvals, eps, None)
         return eigvecs @ np.diag(eigvals_mod) @ eigvecs.T
+    
+    def symmetrize(self, H):
+        """Symmetrize a matrix by averaging it with its transpose."""
+        return 0.5 * (H + H.T)
 
-    def perturb(self, type="adaptive"):
+    def perturb(self, type="adaptive", verbose=False):
         if type == "adaptive":
-            direction, curvature = self.get_softest_hessian_mode(self.position)
-            print(direction, curvature)
-            if self.scale_perturb_by_curvature:
-                ### CRUCIAL CODE 
-                scale = np.clip(self.curvature_perturbation_scale/np.sqrt(np.abs(curvature)), self.default_perturbation_size/10, self.default_perturbation_size*10)
-                ###
+            H = self.most_recent_hessian        
+
+            if False: None # ot (np.all(H>1e-8) and np.all(H<1e8)):
+            #     if verbose:
+            #         print("ill-conditioned hessian; reverting to random perturbation")
+            #         print("Hessian:", H)
+            #     direction = np.random.rand(self.dimension)*2-1
+            #     scale = self.default_perturbation_size 
             else: 
-                scale = self.default_perturbation_size                    
+                direction, curvature = self.get_softest_hessian_mode(self.position)
+
+                # randomly choose which softmode direction to jump to 
+                if np.random.rand() < 0.5:
+                    direction = direction
+                else:
+                    direction = -direction
+
+                if self.scale_perturb_by_curvature:
+                    ### CRUCIAL CODE 
+                    scale = np.clip(original := self.curvature_perturbation_scale/np.sqrt(np.abs(curvature)), self.default_perturbation_size/10, self.default_perturbation_size*10)
+                    ###
+                    if verbose: 
+                        print("Proposed perturbation distance:", original)
+                        print("Clipped perturbation distance:", scale)
+                else: 
+                    scale = self.default_perturbation_size                    
         else: 
             direction = np.random.rand(self.dimension)*2-1
             scale = self.default_perturbation_size 
@@ -569,19 +684,21 @@ class CurvatureAdaptiveABC:
             #     self.descend(convergence_threshold=1e-6, max_steps=1e4)
 
             pos = self.position.copy() # position before perturbation
+
+            # print("iter", iteration)
+            # print("BFGS hessian:", self.most_recent_hessian)
+            # print("f_diff hessian:", self.compute_hessian_finite_difference(pos, 1e-5))
            
-            if self.current_iteration % self.random_perturb_every == 0: 
-                self.perturb(type="random")
-            else:
-                self.perturb(type=self.perturb_type)
+            # if self.current_iteration % self.random_perturb_every == 0: 
+            #     self.perturb(type="random")
+            # else:
+            self.perturb(type=self.perturb_type, verbose=verbose)
 
 
             # if self.current_iteration!=0: 
             self.deposit_bias(pos, verbose=verbose)
                 
             self.update_records()
-
-            print("hessian:", self.most_recent_hessian)
                 
             if verbose:
                 print(f"Iteration {iteration+1}/{max_iterations}: "

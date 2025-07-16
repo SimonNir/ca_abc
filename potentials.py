@@ -463,8 +463,8 @@ def align_to_canonical(positions):
         positions[:, 2] = -positions[:, 2]
 
     return positions
+    
 
-# === Canonical PES Class ===
 class CanonicalASEPES(PotentialEnergySurface):
     def __init__(self, atoms, k_soft=10):
         super().__init__()
@@ -479,36 +479,110 @@ class CanonicalASEPES(PotentialEnergySurface):
         return self.atoms.get_potential_energy()
 
     def _gradient(self, x_internal):
+        """
+        Compute gradient by properly projecting Cartesian forces into internal coordinates.
+        This uses the chain rule: dE/dq = (dE/dr) * (dr/dq)
+        where q are internal coordinates and r are Cartesian coordinates.
+        """
+        pos = internal_to_cartesian(x_internal, self.N, self.k_soft)
+        self.atoms.positions = pos
+        forces = self.atoms.get_forces()  # This is -dE/dr
+        
+        # Compute Jacobian matrix dr/dq using finite differences
+        jacobian = self._compute_jacobian(x_internal)
+        
+        # Flatten forces to 1D array
+        forces_flat = forces.flatten()
+        
+        # Apply chain rule: dE/dq = -forces^T * jacobian
+        # The negative sign is because forces = -dE/dr
+        gradient = -np.dot(forces_flat, jacobian)
+        
+        return gradient
+
+    def _compute_jacobian(self, x_internal, eps=1e-6):
+        """
+        Compute the Jacobian matrix dr/dq using finite differences.
+        Returns a (3N x 3N-6) matrix where each column is dr/dq_i.
+        """
+        n_internal = len(x_internal)
+        n_cartesian = 3 * self.N
+        
+        jacobian = np.zeros((n_cartesian, n_internal))
+        
+        # Reference position
+        pos_ref = internal_to_cartesian(x_internal, self.N, self.k_soft)
+        
+        for i in range(n_internal):
+            # Perturb internal coordinate i
+            x_plus = x_internal.copy()
+            x_plus[i] += eps
+            pos_plus = internal_to_cartesian(x_plus, self.N, self.k_soft)
+            
+            x_minus = x_internal.copy()
+            x_minus[i] -= eps
+            pos_minus = internal_to_cartesian(x_minus, self.N, self.k_soft)
+            
+            # Compute derivative using central difference
+            jacobian[:, i] = (pos_plus.flatten() - pos_minus.flatten()) / (2 * eps)
+        
+        return jacobian
+
+    def _gradient_analytical(self, x_internal):
+        """
+        Alternative analytical gradient implementation for specific cases.
+        This is more efficient but requires careful derivation of the transformations.
+        """
         pos = internal_to_cartesian(x_internal, self.N, self.k_soft)
         self.atoms.positions = pos
         forces = self.atoms.get_forces()
-        grad_full = -forces
+        grad_full = -forces  # Convert forces to gradients
         grad = np.zeros_like(x_internal)
 
         if self.N == 2:
+            # For 2 atoms: only 1 internal coordinate (distance)
             grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
             return grad
 
         if self.N == 3:
+            # For 3 atoms: 3 internal coordinates
             grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
             grad[1] = grad_full[2, 0]
             grad[2] = grad_full[2, 1] * d_softplus_dx(x_internal[2], self.k_soft)
             return grad
 
-        # General case
+        # General case for N > 3
+        # First three internal coordinates
         grad[0] = grad_full[1, 0] * d_softplus_dx(x_internal[0], self.k_soft)
         grad[1] = grad_full[2, 0]
         grad[2] = grad_full[2, 1] * d_softplus_dx(x_internal[2], self.k_soft)
 
-        rest = x_internal[3:].reshape(-1, 3)
-        d_sp = d_softplus_dx(rest[:, 2], self.k_soft)
-        grad_rest = np.zeros_like(rest)
-        grad_rest[:, 0] = grad_full[3:, 0]
-        grad_rest[:, 1] = grad_full[3:, 1]
-        grad_rest[:, 2] = grad_full[3:, 2] * d_sp
-        grad[3:] = grad_rest.reshape(-1)
+        # Remaining coordinates - need proper transformation
+        if len(x_internal) > 3:
+            # For atoms 4 and beyond, we need to account for the full transformation
+            # This is where the original code was insufficient
+            for i in range(3, self.N):
+                idx_start = 3 + (i - 3) * 3
+                idx_end = idx_start + 3
+                
+                if idx_end <= len(x_internal):
+                    # Extract the internal coordinates for this atom
+                    atom_coords = x_internal[idx_start:idx_end]
+                    
+                    # Transform gradients properly considering the coordinate system
+                    # This requires the full Jacobian transformation
+                    grad[idx_start] = grad_full[i, 0]  # x-component
+                    grad[idx_start + 1] = grad_full[i, 1]  # y-component
+                    grad[idx_start + 2] = grad_full[i, 2] * d_softplus_dx(atom_coords[2], self.k_soft)
 
         return grad
+
+    def default_starting_position(self) -> np.ndarray:
+        """Return default starting position in internal coordinates."""
+        # This should be implemented based on your internal coordinate system
+        # For now, returning a placeholder
+        n_internal = 3 * self.N - 6
+        return np.zeros(n_internal)
 
 # === Lennard-Jones Cluster in Canonical Frame ===
 class CanonicalLennardJonesCluster(CanonicalASEPES):

@@ -1,0 +1,50 @@
+
+Energies of found minima:
+Minimum 1: Position = [0.41294657], Energy = [-0.82415849]
+Minimum 2: Position = [-2.27151466], Energy = [-1.672135]
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-1.26430057], Energy = [0.63764114]
+
+Computational statistics:
+	Total energy calls: 166329
+	Energy calls at each min: [411, 115044]
+	Total force calls: 0
+	Force calls at each min: [0, 0]
+	Total steps: 56319
+
+Verification against reference:
+True minima found: 2/5
+Missed minima at positions:
+[2.71638]
+[8.69999]
+[10.35518]
+
+Verification against reference (saddles):
+True saddles found: 1/4
+Missed saddles at positions:
+[1.94219]
+[4.55508]
+[9.7913]
+
+Configuration parameters:
+self.potential = <potentials.Complex1D object at 0x7f87552d2110>
+self.curvature_method = bfgs
+self.dump_every = 10000
+self.perturb_type = fixed
+self.scale_perturb_by_curvature = True
+self.default_perturbation_size = 0.03
+self.curvature_perturbation_scale = 0.1
+self.bias_height_type = fixed
+self.default_bias_height = 0.05
+self.max_bias_height = 0.25
+self.curvature_bias_height_scale = 0.1
+self.max_perturbation_size = 0.15
+self.bias_covariance_type = fixed
+self.default_bias_covariance = [[0.003]]
+self.max_bias_covariance = 0.015
+self.curvature_bias_covariance_scale = 0.005
+self.descent_convergence_threshold = 0.0001
+self.max_descent_steps = 1000
+self.max_acceptable_force_mag = 1e+99
+self.optimizer = <optimizers.FIREOptimizer object at 0x7f87c7433dc0>

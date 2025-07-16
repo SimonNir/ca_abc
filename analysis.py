@@ -103,7 +103,7 @@ class ABCAnalysis:
             self._plot_2d_summary(filename, save_plots, plot_type)
         else:
             print(f"Standard visualization not supported for {self.dimension}D systems")
-            self.plot_diagnostics(plot_type=plot_type)
+            self.plot_diagnostics(filename, plot_type=plot_type, save_plots=save_plots)
 
     def _plot_1d_summary(self, filename=None, save_plots=False, plot_type='neither'):
         """1D summary plots (potential, trajectory, histogram, energy profile)"""

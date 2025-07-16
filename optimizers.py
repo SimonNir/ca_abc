@@ -18,6 +18,7 @@ class Optimizer(ABC):
         self.unbiased_forces = []
         self.biased_forces = []
         self._last_x = None
+        self._x_to_index = {}
 
     def _compute(self, x):
         """Compute and record energy/forces (cached)"""
@@ -33,8 +34,12 @@ class Optimizer(ABC):
                 unbiased_force = None
             biased_force = self.abc_sim.compute_biased_force(x, unbiased_force)
            
-            # Record
+            # Record trajectory and map
             self.trajectory.append(x.copy())
+            index = len(self.trajectory) - 1
+            key = tuple(np.round(x, 8))  # Rounded for precision-safe lookup
+            self._x_to_index[key] = index
+
             self.unbiased_energies.append(unbiased_energy)
             self.biased_energies.append(biased_energy)
             self.unbiased_forces.append(unbiased_force)
@@ -46,31 +51,15 @@ class Optimizer(ABC):
     def get_traj_data(self):
         accepted = self._accepted_steps()
         indices = []
+
         for pos in accepted:
-            found = False
-            for i, traj_pos in enumerate(self.trajectory):
-                if np.allclose(pos, traj_pos, atol=1e-10):
-                    indices.append(i)
-                    found = True
-                    break
-            if not found:
-                # Try with a higher tolerance
-                for i, traj_pos in enumerate(self.trajectory):
-                    if np.allclose(pos, traj_pos, atol=1e-8):
-                        indices.append(i)
-                        found = True
-                        print(f"Warning: Position {pos} not found with tol={1e-10}, matched with tol={1e-8} at index {i}.")
-                        break
-            if not found:
-                # Try with a higher tolerance
-                for i, traj_pos in enumerate(self.trajectory):
-                    if np.allclose(pos, traj_pos, atol=1e-6):
-                        indices.append(i)
-                        found = True
-                        print(f"Warning: Position {pos} not found with tol={1e-10} or {1e-8}, matched with tol={1e-6} at index {i}.")
-                        break
-            if not found:
-                print(f"Warning: Accepted position {pos} not found in trajectory with any tolerance.")
+            key = tuple(np.round(pos, 8))
+            index = self._x_to_index.get(key, None)
+            if index is not None:
+                indices.append(index)
+            else:
+                print(f"Warning: Accepted position {pos} not found in trajectory (key: {key})")
+
         return {
             'trajectory': [self.trajectory[i] for i in indices],
             'unbiased_energies': [self.unbiased_energies[i] for i in indices],
@@ -465,6 +454,9 @@ class CanonicalASEOptimizer(ASEOptimizer):
         }
         
         return self._package_result()
+    
+
+from potentials import softplus, d_softplus_dx
 
 class _CanonicalASECalculatorWrapper(Calculator):
     implemented_properties = ['energy', 'forces']
@@ -585,6 +577,33 @@ def manual_bfgs_inverse_hessian(positions, forces):
 
 import numpy as np
 from scipy.optimize._hessian_update_strategy import BFGS
+from copy import deepcopy
+
+def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
+    if len(positions) != len(forces):
+        raise ValueError("positions and forces must have the same length")
+    if len(positions) < 2:
+        raise ValueError("Need at least two position-force pairs")
+
+    n = positions[0].shape[0]
+    updater = BFGS(exception_strategy='skip_update', init_scale='auto')
+    updater.initialize(n, approx_type='inv_hess')  # inverse Hessian approx
+
+    if assume_forces_are_neg_grads:
+        grads = [-f for f in forces]
+    else:
+        grads = forces
+
+    for i in range(len(positions) - 1):
+        s = positions[i+1] - positions[i]
+        y = grads[i+1] - grads[i]
+        updater.update(s, y)
+
+    return updater.get_matrix()
+
+import numpy as np
+from scipy.optimize._hessian_update_strategy import BFGS
+from copy import deepcopy
 
 def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
     if len(positions) != len(forces):
@@ -649,10 +668,14 @@ class FIREOptimizer(Optimizer):
         velocity_damping = self.velocity_damping
 
         n_pos = 0
-        self.accepted_positions = [x.copy()]
+        # Don't add initial position here - let the first _compute() call handle it
+        self.accepted_positions = [] 
 
         for step in range(max_steps):
             energy, grad = self._compute(x)
+            # Now x is in trajectory, so add it to accepted_positions
+            self.accepted_positions.append(x.copy())
+            
             force = -grad
             fmax = np.max(np.abs(force))
 
@@ -690,11 +713,17 @@ class FIREOptimizer(Optimizer):
                 step_vec = step_vec / step_norm * max_step_size
 
             x = x + step_vec
-            self.accepted_positions.append(x.copy())
 
         converged = (fmax < f_tol)
 
-        hess_inv = bfgs_inverse_hessian(self.trajectory.copy(), self.biased_forces.copy())
+        # Compute BFGS inverse Hessian using full trajectory (like SciPy does)
+        hess_inv = None
+        if len(self.trajectory) >= 2:
+            try:
+                hess_inv = bfgs_inverse_hessian(self.trajectory, self.biased_forces)
+            except Exception as e:
+                print(f"Warning: Could not compute BFGS inverse Hessian: {e}")
+                hess_inv = None
 
         return {
             'x': x,
@@ -706,4 +735,3 @@ class FIREOptimizer(Optimizer):
 
     def _accepted_steps(self):
         return self.accepted_positions.copy()
-

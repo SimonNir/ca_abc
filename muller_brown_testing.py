@@ -26,18 +26,18 @@ def run_2d_simulation():
         max_bias_height= 3,
         curvature_bias_height_scale=100,
 
-        bias_covariance_type="fixed",
+        bias_covariance_type="adaptive",
         default_bias_covariance=0.005,
-        max_bias_covariance= 0.05,
-        curvature_bias_covariance_scale=0.00002,
+        max_bias_covariance= 0.02,
+        curvature_bias_covariance_scale=0.00005,
         
-        max_descent_steps=300,
+        max_descent_steps=500,
         descent_convergence_threshold=1e-6, 
         max_acceptable_force_mag=1e99,
     )
     
     opt = FIREOptimizer(abc)  
-    abc.run(max_iterations=200, stopping_minima_number=3, optimizer=opt, verbose=False)
+    abc.run(max_iterations=1000, stopping_minima_number=3, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)

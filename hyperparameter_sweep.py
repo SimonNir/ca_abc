@@ -18,15 +18,17 @@ def analyze_run(abc):
     saddle_errors = [l2_error_to_nearest(sad, known_saddles) for sad in abc.saddles]
 
     return {
-        'num_minima': len(abc.minima),
-        'num_saddles': len(abc.saddles),
+        'found_minima': abc.minima,
+        'found_saddles': abc.saddles,
         'minima_l2_error_mean': np.mean(minima_errors) if minima_errors else np.nan,
+        'minima_l2_error_stdv': np.std(minima_errors) if minima_errors else np.nan,
         'minima_l2_error_max': np.max(minima_errors) if minima_errors else np.nan,
         'saddle_l2_error_mean': np.mean(saddle_errors) if saddle_errors else np.nan,
+        'saddle_l2_error_stdv': np.std(saddle_errors) if saddle_errors else np.nan,
         'saddle_l2_error_max': np.max(saddle_errors) if saddle_errors else np.nan,
         'bias_count': len(abc.biases),
-        'mean_energy_calls_per_min': np.mean(abc.energy_calls_at_each_min) if abc.energy_calls_at_each_min else np.nan,
-        'mean_force_calls_per_min': np.mean(abc.force_calls_at_each_min) if abc.force_calls_at_each_min else np.nan,
+        'energy_calls_at_each_min': abc.energy_calls_at_each_min if abc.energy_calls_at_each_min else np.nan,
+        'force_calls_at_each_min': abc.force_calls_at_each_min if abc.force_calls_at_each_min else np.nan,
     }
 
 def main():
@@ -81,7 +83,7 @@ def main():
                 )
 
                 optimizer = FIREOptimizer(abc)
-                abc.run(max_iterations=2000, stopping_minima_number=3, optimizer=optimizer, verbose=False)
+                abc.run(max_iterations=2000, stopping_minima_number=3, optimizer=optimizer, verbose=False, save_summary=False)
 
                 run_data = analyze_run(abc)
                 run_data.update({

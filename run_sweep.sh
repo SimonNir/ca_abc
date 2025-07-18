@@ -19,4 +19,4 @@
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python3 hyperparameter_sweep.py
+python3 hyperparameter_sweep.py > output_sweep.txt

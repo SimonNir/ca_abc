@@ -1,20 +1,5 @@
 #! /usr/bin/env python3
 
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=32
-#SBATCH --time=12:00:00
-
-#SBATCH -p burst
-
-#SBATCH -A birthright
-
-#SBATCH --job-name=mb_sweep
-
-#SBATCH --mail-user=nirenbergsd@ornl.gov
-#SBATCH --mail-type=END
-
-#SBATCH -o mb_sweep.out
-
 import numpy as np
 import pandas as pd
 import time

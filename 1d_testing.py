@@ -38,7 +38,7 @@ def run_1d_simulation():
     myopt = FIREOptimizer(abc)
     # myopt = ScipyOptimizer(abc, "BFGS")
     # myopt = ASEOptimizer(abc, optimizer_class='FIRE')
-    abc.run(max_iterations=1800, optimizer=myopt, verbose=False)
+    abc.run(max_iterations=1800, optimizer=myopt, verbose=True)
         
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)

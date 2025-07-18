@@ -3,6 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=32
 #SBATCH --time=12:00:00
+#SBATCH --mem=1000m
 
 #SBATCH -p burst
 

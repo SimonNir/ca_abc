@@ -15,9 +15,9 @@
 #SBATCH --mail-user=nirenbergsd@ornl.gov
 #SBATCH --mail-type=END
 
-#SBATCH -o parallel_sweep.out
+#SBATCH -o new_sweep.out
 
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python -u parallel_sweep.py > output_parallel_sweep.txt
+python -u new_sweep.py > new_sweep.txt

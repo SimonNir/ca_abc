@@ -13,9 +13,9 @@ def run_2d_simulation():
     abc = CurvatureAdaptiveABC(
         potential=StandardMullerBrown2D(),
         starting_position=[0.0, 0.0],
-        curvature_method="bfgs",
+        curvature_method="None",
 
-        perturb_type="adaptive",
+        perturb_type="fixed",
         default_perturbation_size=0.001,
         scale_perturb_by_curvature=False,
         curvature_perturbation_scale=0.1,
@@ -26,8 +26,8 @@ def run_2d_simulation():
         max_bias_height= 3,
         curvature_bias_height_scale=100,
 
-        bias_covariance_type="adaptive",
-        default_bias_covariance=0.005,
+        bias_covariance_type="fixed",
+        default_bias_covariance=0.001,
         max_bias_covariance= 0.02,
         curvature_bias_covariance_scale=1,
         
@@ -39,12 +39,14 @@ def run_2d_simulation():
     )
     
     opt = FIREOptimizer(abc)  
-    abc.run(max_iterations=1000, stopping_minima_number=3, optimizer=opt, verbose=True)
+    abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
     analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
     analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
+
+    print(abc.saddles)
 
 def main():
         run_2d_simulation()

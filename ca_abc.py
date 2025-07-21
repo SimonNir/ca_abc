@@ -372,11 +372,10 @@ class CurvatureAdaptiveABC:
                 log_target_var = 0.5 * (np.log(min_variance) + np.log(max_variance))
 
                 log_delta = log_target_var - self.log_running_variance_ema
-
+                delta = np.exp(log_delta)
                 if self.conservative_ems_delta:
-                    delta = np.clip(np.exp(log_delta), 0.1, 1) # prevent overbiasing by keeping delta <= 1
-                    # in practice, it seems allowing a free delta outperforms substantially 
-
+                    delta = np.clip(delta, 0.1, 1) # prevent overbiasing by keeping delta <= 1
+                
                 var_along_modes = delta * proposed_vars
 
                 if verbose:

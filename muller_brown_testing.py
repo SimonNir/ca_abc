@@ -29,7 +29,9 @@ def run_2d_simulation():
         bias_covariance_type="adaptive",
         default_bias_covariance=0.005,
         max_bias_covariance= 0.02,
-        curvature_bias_covariance_scale=0.00005,
+        curvature_bias_covariance_scale=1,
+        
+        use_ema_adaptive_scaling=True,
         
         max_descent_steps=500,
         descent_convergence_threshold=1e-6, 

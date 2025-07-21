@@ -31,24 +31,33 @@ class CurvatureAdaptiveABC:
         perturb_type="adaptive",
         scale_perturb_by_curvature=True,
         default_perturbation_size=0.05,
+        min_perturbation_size = None, 
         max_perturbation_size = None, 
-        curvature_perturbation_scale = 1.0,
+        curvature_perturbation_scale = 1.0, # only used if ema scaling is false 
         
         # Biasing strategy
         bias_height_type ="adaptive",
         default_bias_height = 1.0,
+        min_bias_height = None,
         max_bias_height = None,
-        curvature_bias_height_scale=1.0, 
+        curvature_bias_height_scale=1.0, # only used if ema scaling is false 
 
         bias_covariance_type = "adaptive",
         default_bias_covariance=1.0,
+        min_bias_covariance = None,
         max_bias_covariance = None,
-        curvature_bias_covariance_scale=1.0, 
+        curvature_bias_covariance_scale=1.0, # only used if ema scaling is false 
+
+ 
+        use_ema_adaptive_scaling = True, 
+        ema_alpha = 0.3, 
+        conservative_ems_delta = False,
+        
         
         # Descent and optimization
-        descent_convergence_threshold=1e-5,
-        max_descent_steps=100,
-        max_acceptable_force_mag = 1e99 # bfgs actually does best with uncapped max force
+        descent_convergence_threshold=1e-4,
+        max_descent_steps=600,
+        max_acceptable_force_mag = 1e99 # in practice, the optimizers actually do best with uncapped max force
     ):
         """
         Initialize the SmartABC sampler.
@@ -73,21 +82,38 @@ class CurvatureAdaptiveABC:
         self.perturb_type = perturb_type
         self.scale_perturb_by_curvature = scale_perturb_by_curvature
         self.default_perturbation_size = default_perturbation_size
-        self.curvature_perturbation_scale = curvature_perturbation_scale
+        if min_perturbation_size is None: 
+            min_perturbation_size = default_perturbation_size
+        self.min_perturbation_size = min_perturbation_size
+        self.max_perturbation_size = max_perturbation_size
+        self.curvature_perturbation_scale = curvature_perturbation_scale  # only used if ema scaling is false 
     
         self.bias_height_type = bias_height_type
         self.default_bias_height = default_bias_height 
+        if min_bias_height is None:
+            min_bias_height = default_bias_height
+        self.min_bias_height = min_bias_height
         self.max_bias_height = max_bias_height
-        self.curvature_bias_height_scale = curvature_bias_height_scale
-        self.max_perturbation_size = max_perturbation_size
+        self.curvature_bias_height_scale = curvature_bias_height_scale  # only used if ema scaling is false 
 
         
         self.bias_covariance_type = bias_covariance_type
         if np.isscalar(default_bias_covariance): 
             default_bias_covariance = np.eye(self.dimension) * default_bias_covariance
         self.default_bias_covariance = np.atleast_2d(default_bias_covariance)
+        if min_bias_covariance is None:
+            min_bias_covariance = np.min(np.diag(self.default_bias_covariance))
+        self.min_bias_covariance = min_bias_covariance
         self.max_bias_covariance = max_bias_covariance
-        self.curvature_bias_covariance_scale = curvature_bias_covariance_scale
+        self.curvature_bias_covariance_scale = curvature_bias_covariance_scale # only used if ema scaling is false 
+
+        self.use_ema_adaptive_scaling = use_ema_adaptive_scaling
+        self.ema_alpha = ema_alpha
+        self.conservative_ems_delta = conservative_ems_delta
+
+        self.log_running_variance_ema = None
+        self.log_running_height_ema = None
+        self.log_running_perturb_ema = None
         
         self.descent_convergence_threshold = descent_convergence_threshold
         self.max_descent_steps = max_descent_steps
@@ -284,35 +310,33 @@ class CurvatureAdaptiveABC:
         return hessian
 
 
-    def deposit_bias(self, center: np.ndarray = None, covariance: float|np.ndarray = None, height: float = None, verbose=False):
-        """Deposit a new Gaussian bias potential.
-
-        Args:
-            center: Center of the bias (defaults to current position).
-            covariance: Covariance (float for isotropic, or np.ndarray for anisotropic).
-            height: Height of the bias.
-        """
+    def deposit_bias(self, center: np.ndarray = None, covariance: float | np.ndarray = None, height: float = None, verbose=False):
         pos = center if center is not None else self.position.copy()
-            
-        # if verbose:
-        #     print('Bias position:', pos)
 
-        if height is not None: 
-            h = height 
-        else: 
+        if height is not None:
+            h = height
+        else:
             if self.bias_height_type == "adaptive":
                 _, curvature = self.get_softest_hessian_mode(center)
-                # print("softest curvature:", curvature)
-                h = self.curvature_bias_height_scale * np.abs(curvature)
-                # Try also just using height from prior descent / barrier 
-            else: 
-                # Fall back to defaults
+
+                if self.use_ema_adaptive_scaling:
+                    log_height = np.log(self.curvature_bias_height_scale * np.abs(curvature))
+
+                    if self.log_running_height_ema is None:
+                        self.log_running_height_ema = log_height
+                    else:
+                        self.log_running_height_ema = (
+                            self.ema_alpha * log_height +
+                            (1 - self.ema_alpha) * self.log_running_height_ema
+                        )
+
+                    h = np.exp(self.log_running_height_ema)
+                else:
+                    h = self.curvature_bias_height_scale * np.abs(curvature)
+            else:
                 h = self.default_bias_height
 
-        # note that this still works when min_height and/or max_height are set to None; just returns the original height 
-        min_height = self.default_bias_height # or self.default_bias_height/2
-        max_height = self.max_bias_height # or self.default_bias_height*2
-        clipped_h = np.clip(h, min_height, max_height)
+        clipped_h = np.clip(h, self.min_bias_height, self.max_bias_height)
 
         if verbose and self.bias_height_type.lower() == "adaptive":
             print("Proposed height:", h)
@@ -320,63 +344,75 @@ class CurvatureAdaptiveABC:
 
         if covariance is not None:
             cov = covariance
-        else: 
-            # Smart bias scaling based on curvature if available
+        else:
             if self.bias_covariance_type == "adaptive" and self.most_recent_hessian is not None:
                 cov = np.linalg.inv(self.most_recent_hessian)
             else:
                 cov = self.default_bias_covariance
 
-        # 1. Get eigenvalues/vectors - ensure proper matrix shapes
-        eigvals, eigvecs = np.linalg.eigh(np.atleast_2d(cov))  # Use built-in SVD for stability
+        eigvals, eigvecs = np.linalg.eigh(np.atleast_2d(cov))
 
-
-        # Covariance eigenvalues from: σ² = height / curvature
         if self.bias_covariance_type == "adaptive":
-            var_along_modes = clipped_h*self.curvature_bias_covariance_scale / eigvals
+            if self.use_ema_adaptive_scaling and self.most_recent_hessian is not None:
+
+                proposed_vars = clipped_h * eigvals
+
+                log_mean_var = np.mean(np.log(proposed_vars))
+
+                if self.log_running_variance_ema is None:
+                    self.log_running_variance_ema = log_mean_var
+                else:
+                    self.log_running_variance_ema = (
+                        self.ema_alpha * log_mean_var +
+                        (1 - self.ema_alpha) * self.log_running_variance_ema
+                    )
+
+                min_variance = self.min_bias_covariance
+                max_variance = self.max_bias_covariance 
+                log_target_var = 0.5 * (np.log(min_variance) + np.log(max_variance))
+
+                log_delta = log_target_var - self.log_running_variance_ema
+
+                if self.conservative_ems_delta:
+                    delta = np.clip(np.exp(log_delta), 0.1, 1) # prevent overbiasing by keeping delta <= 1
+                    # in practice, it seems allowing a free delta outperforms substantially 
+
+                var_along_modes = delta * proposed_vars
+
+                if verbose:
+                    print("EMA log variance:", self.log_running_variance_ema)
+                    print("Target log variance:", log_target_var)
+                    print("Dynamic delta:", delta)
+            else:
+                var_along_modes =  clipped_h * self.curvature_bias_covariance_scale * eigvals
         else:
             var_along_modes = eigvals
 
-        # Clip variance range
-        min_variance = np.min(np.diag(self.default_bias_covariance))
+        clipped_eigvals = np.clip(var_along_modes, self.min_bias_covariance, self.max_bias_covariance)
 
-        max_variance = self.max_bias_covariance
-        clipped_eigvals = np.clip(var_along_modes, min_variance, max_variance)
-
-        # 3. Reconstruct with dimension guarantees
-        n = len(eigvals)
-        if verbose and self.bias_covariance_type.lower() =="adaptive":
-            # n_clipped = np.sum((eigvals != clipped_eigvals))
-            # print(f"Eigenvalues clipped: {n_clipped} / {n}")
+        if verbose and self.bias_covariance_type.lower() == "adaptive":
             print("Proposed var:", var_along_modes)
-            print("Clipped var:", clipped_eigvals)   
+            print("Clipped var:", clipped_eigvals)
 
         clipped_cov = eigvecs @ np.diag(clipped_eigvals) @ eigvecs.T
-
-        # 4. Force symmetry (numerical stability)
         clipped_cov = 0.5 * (clipped_cov + clipped_cov.T)
-
         clipped_cov = np.atleast_2d(clipped_cov)
 
-        try: 
-            # Verification
-            assert clipped_cov.shape == (n, n), "Matrix not square"
-            assert np.allclose(clipped_cov, clipped_cov.T), "Not symmetric"  
+        try:
+            assert clipped_cov.shape == (len(eigvals), len(eigvals)), "Matrix not square"
+            assert np.allclose(clipped_cov, clipped_cov.T), "Not symmetric"
         except AssertionError as e:
             print("Error:", e)
             print("Covariance matrix that caused error:\n", clipped_cov)
             sys.exit(1)
 
-        bias = GaussianBias(
-            center=pos,
-            covariance=clipped_cov,
-            height=clipped_h
-        )
+        bias = GaussianBias(center=pos, covariance=clipped_cov, height=clipped_h)
         self.bias_list.append(bias)
 
         # if verbose and self.bias_covariance_type.lower() == "adaptive":
         #     approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
         #     print("Approximate bias volume:", approx_vol)
+
 
     def descend(self, max_steps=None, convergence_threshold=None):
         """
@@ -483,7 +519,7 @@ class CurvatureAdaptiveABC:
     def _check_minimum(self, converged, final_pos, verbose=True):
         """Check if the final position is a minimum."""
            
-        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/100):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.min_bias_height/50):
             
             def is_unique(pos, minima, threshold=1e-3):
                 if len(minima) == 0:
@@ -536,27 +572,38 @@ class CurvatureAdaptiveABC:
         if type == "adaptive" and self.most_recent_hessian is not None:
             direction, curvature = self.get_softest_hessian_mode(self.position)
 
-            # randomly choose which softmode direction to jump to 
             if np.random.rand() < 0.5:
                 direction = direction
             else:
                 direction = -direction
 
             if self.scale_perturb_by_curvature:
-                ### CRUCIAL CODE 
-                scale = np.clip(original := self.curvature_perturbation_scale/np.sqrt(np.abs(curvature)), self.default_perturbation_size, self.max_perturbation_size)
-                ###
-                if verbose: 
-                    print("Proposed perturbation distance:", original)
+                if self.use_ema_adaptive_scaling:
+                    log_scale = np.log(self.curvature_perturbation_scale / np.sqrt(curvature))
+                    if self.log_running_perturb_ema is None:
+                        self.log_running_perturb_ema = log_scale
+                    else:
+                        self.log_running_perturb_ema = (
+                            self.ema_alpha * log_scale +
+                            (1 - self.ema_alpha) * self.log_running_perturb_ema
+                        )
+                    proposed_scale = np.exp(self.log_running_perturb_ema)
+                else:
+                    proposed_scale = self.curvature_perturbation_scale / np.sqrt(curvature)
+
+                scale = np.clip(proposed_scale, self.min_perturbation_size, self.max_perturbation_size)
+                if verbose:
+                    print("Proposed perturbation distance:", proposed_scale)
                     print("Clipped perturbation distance:", scale)
-            else: 
-                scale = self.default_perturbation_size                    
-        else: 
-            direction = np.random.rand(self.dimension)*2-1
-            scale = self.default_perturbation_size 
+            else:
+                scale = self.default_perturbation_size
+        else:
+            direction = np.random.rand(self.dimension) * 2 - 1
+            scale = self.default_perturbation_size
 
         direction = direction / np.linalg.norm(direction)
         self.position += scale * direction
+
     
     def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, summary_file=None, stopping_minima_number=None):
         """

@@ -14,6 +14,7 @@ def run_2d_simulation():
         potential=StandardMullerBrown2D(),
         starting_position=[0.0, 0.0],
         curvature_method="None",
+        dump_every=10000
 
         perturb_type="fixed",
         default_perturbation_size=0.001,

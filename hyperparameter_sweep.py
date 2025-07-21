@@ -65,7 +65,7 @@ def main():
                         abc = CurvatureAdaptiveABC(
                             potential=StandardMullerBrown2D(),
                             starting_position=[0.0, 0.0],
-                            curvature_method="bfgs",
+                            curvature_method="None",
                             dump_every=3000,
 
                             perturb_type="fixed",

@@ -2,9 +2,9 @@
 
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=16G
 
 #SBATCH -p burst
 
@@ -20,4 +20,4 @@
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python -u sweep_v3.py > sweep_v3.txt
+python -u sweep_v3_2.py > sweep_v3_2.txt

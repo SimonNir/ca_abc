@@ -235,11 +235,14 @@ def main():
     nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", cpu_count()))
     start_time = time.time()
 
-    with Pool(nprocs) as pool:
-        pool.map(single_run, indexed_params)
-
-    print(f"Sweep complete in {(time.time() - start_time)/60:.2f} minutes")
-    merge_results()
+    try:
+        with Pool(nprocs) as pool:
+            pool.map(single_run, indexed_params)
+        print(f"Sweep complete in {(time.time() - start_time)/60:.2f} minutes")
+        merge_results()
+    except KeyboardInterrupt:
+        print("\nInterrupted by user. Exiting.")
+        os._exit(1)  # hard kill immediately
 
 if __name__ == "__main__":
     main()

@@ -212,6 +212,9 @@ def merge_results():
 # --- Entry Point ---
 
 def main():
+    import os
+    print("SLURM_CPUS_PER_TASK =", os.environ.get("SLURM_CPUS_PER_TASK"))
+
     os.makedirs(RESULT_DIR, exist_ok=True)
 
     completed_from_csv = get_completed_runs_from_csv(PAST_CSV)
@@ -232,7 +235,7 @@ def main():
 
     print(f"{len(indexed_params)} runs remain to do.")
 
-    nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", cpu_count()))
+    nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", 32))
     start_time = time.time()
 
     try:

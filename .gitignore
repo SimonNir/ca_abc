@@ -3,6 +3,7 @@
 
 # Ignore everything in the abc_data_dumps folder
 abc_data_dumps/
+__pycache__/
 
 # Ignore a specific file
 abc_data_dumps/abc_dump_iter_3000.pkl

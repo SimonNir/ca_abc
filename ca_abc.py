@@ -145,6 +145,7 @@ class CurvatureAdaptiveABC:
         self.iter_periods = [] 
         self.energy_calls_at_each_min = []
         self.force_calls_at_each_min = []
+        self.length_at_last_summary = -1
 
    
     def store_to_disk(self):
@@ -658,8 +659,9 @@ class CurvatureAdaptiveABC:
                 output.append(f"Minimum {i+1}: Position = {min_pos}, Energy = {self.unbiased_energies[idx]}")
 
         # 2. Report any on-the-fly saddle points
-        if self.saddles: 
-            output.append(f"\nOn-the-fly-identified saddle-points: {self.saddles}")
+        # DEPRECATED
+        # if self.saddles: 
+            # output.append(f"\nOn-the-fly-identified saddle-points: {self.saddles}")
 
         # 3. Approximate saddle points between minima
         if len(self.minima) > 1:
@@ -682,7 +684,10 @@ class CurvatureAdaptiveABC:
             output.append("\nApproximate saddle points between minima:")
             for i, (pos, energy) in enumerate(saddle_info):
                 output.append(f"Saddle {i+1}: Position = {pos}, Energy = {energy}")
-                self.saddles.append(pos)
+                if self.length_at_last_summary < len(self.trajectory):
+                    self.saddles.append(pos)
+            
+        self.length_at_last_summary = len(self.trajectory)
 
         # 4. Computational statistics
         output.append("\nComputational statistics:")

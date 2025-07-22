@@ -192,12 +192,10 @@ def merge_results():
             df_past = pd.read_csv(PAST_CSV)
             df_past = parse_complex_columns(df_past)
             if 'run_id' in df_past.columns:
-                # Drop rows from past that already exist in JSON
-                df_past = df_past[~df_past['run_id'].isin(df_json['run_id'])]
                 df_json = pd.concat([df_json, df_past], ignore_index=True)
                 print(f"Merged {len(df_past)} rows from previous CSV.")
             else:
-                print(f"'run_id' column missing from {PAST_CSV}, skipping.")
+                print(f"run_id column missing from {PAST_CSV}, skipping.")
         except Exception as e:
             print(f"Failed to merge past CSV: {e}")
 
@@ -222,17 +220,11 @@ def main():
 
     print(f"Detected {len(completed_runs)} completed runs to skip.")
 
-    # std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
-    # bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
-    # perturbations = [0.55, 0.01, 0.005, 0.001]
-    # optimizers = [0, 1]
-    # seeds = [1,2,3,4,5,6,7,8,9,10]
-
-    std_dev_scales = [1/3, 1/5, 1/8]
-    bias_height_fractions = [1/5]
-    perturbations = [0.55]
-    optimizers = [0]
-    seeds = [1]
+    std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
+    bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
+    perturbations = [0.55, 0.01, 0.005, 0.001]
+    optimizers = [0, 1]
+    seeds = [1,2,3,4,5,6,7,8,9,10]
 
     all_params = list(product(std_dev_scales, bias_height_fractions, perturbations, optimizers, seeds))
     indexed_params = [(i, *params) for i, params in enumerate(all_params)]

@@ -20,4 +20,4 @@
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python -u sweep_v3_2.py > sweep_v3_2.txt
+python -u sweep_v3.py > sweep_v3_2.txt

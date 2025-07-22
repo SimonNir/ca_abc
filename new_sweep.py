@@ -49,7 +49,7 @@ def single_run(args):
             potential=StandardMullerBrown2D(),
             starting_position=[0.0, 0.0],
             curvature_method="None",
-            dump_every=3000,
+            dump_every=30000,
 
             perturb_type="fixed",
             default_perturbation_size=perturb,

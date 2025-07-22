@@ -21,7 +21,7 @@ class CurvatureAdaptiveABC:
         # Optional parameters organized by category
         # Setup parameters
         starting_position=None,
-        dump_every = 500, # Iters between data dumps
+        dump_every = 10000, # Iters between data dumps
         dump_folder = "abc_data_dumps", 
 
         # Curvature estimation

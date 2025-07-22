@@ -1,0 +1,11 @@
+# Ignore all pickle files
+*.pkl
+
+# Ignore everything in the abc_data_dumps folder
+abc_data_dumps/
+
+# Ignore a specific file
+abc_data_dumps/abc_dump_iter_3000.pkl
+
+# Ignore all gifs 
+*.gif

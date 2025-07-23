@@ -1,112 +1,177 @@
-# README
+# Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)
 
-## Overview
+A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of rugged potential energy surfaces (PES) without requiring predefined collective variables.
 
-This document provides an overview of the components and functionality of the codebase.
+## Key Features
 
-> **Note:** The `traditional_abc` module will eventually be deprecated. The goal is for `smart_abc` to subsume all its features and add more flexibility, such as choosing between noise or softmode perturbations.
-
----
-
-## TODO
-
-- Add a "validate config" function to ensure all settings are sensible.
-- Move all utility functions into a dedicated `util` file (currently kept together for convenience).
+- **Curvature-adaptive biasing**: Uses BFGS-derived Hessian information to shape anisotropic bias potentials
+- **Soft-mode perturbations**: Guides escapes along low-curvature directions for efficient basin transitions
+- **Integrated optimization**: Combines minima discovery and transition state identification in a single workflow
+- **ASE integration**: Works seamlessly with Atomic Simulation Environment for atomistic simulations
+- **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features
 
 ---
 
-## Tunable Parameters
+## Installation
 
-Parameters control the algorithm's behavior. They are either **required** or **optional**, and are set during **initialization** (`abc = ABC(...)`) or when calling **`.run()`** (`abc.run(...)`).
-
----
-
-### Required Parameters (`__init__`)
-
-| Parameter                | Description                                                                 |
-|--------------------------|-----------------------------------------------------------------------------|
-| `potential`              | Callable representing the potential energy function.                        |
-| `expected_barrier_height`| Estimated average basin depth/barrier height (order-of-magnitude accuracy is sufficient). |
-'dump_folder' - set to None for quick calculations; otherwise, automatically generates folder to store run
-dump_every - number of iterations to dump between - if set to 0, will never dump or clear RAM 
----
-
-### Optional Parameters
-
-Optional parameters can be passed to `__init__` or `.run()` as needed.
-
-#### Setup (`__init__`)
-
-| Parameter      | Description                                                                                                              |
-|----------------|--------------------------------------------------------------------------------------------------------------------------|
-| `run_mode`     | `"fastest"` \| `"fast"` \| `"compromise"` \| `"most accurate"` — selects accuracy/performance trade-offs. Default: `"compromise"`. <br> **Note:** `"fastest"` runs a traditional ABC. |
-| `starting_position` | Initial position vector.                                                                                           |
-| `dump_interval`     | Interval for saving progress.                                                                                      |
-
----
-
-#### Curvature Estimation (`__init__`)
-
-| Parameter           | Description                                                                                                         |
-|---------------------|---------------------------------------------------------------------------------------------------------------------|
-| `curvature_method`  | `"full_hessian"` \| `"from_opt"` \| `"lanczos"` \| `"rayleigh"` \| `"ignore"` <br> **Note:** `"from_opt"` requires `optimizer="BFGS"`, `"L-BFGS-B"`, or `"trust-region"`; works best with BFGS. `"ignore"` runs a traditional ABC. |
-
----
-
-#### Perturbation Strategy (`__init__`)
-
-| Parameter                      | Description                                                                                             |
-|--------------------------------|---------------------------------------------------------------------------------------------------------|
-| `perturb_type`                 | `"random"` \| `"soft_dir"` \| `"dynamic"` — `dynamic` starts with softest mode and switches if needed.  |
-| `perturb_dist`                 | `"constant"` \| `"normal"` — determines how perturbation scale is sampled.                              |
-| `scale_perturb_by_curvature`   | If `True`, scale is adjusted by reciprocal curvature (only for `soft_dir` and `dynamic`).               |
-| `default_perturbation_size`    | Used when not scaling by curvature. Default: `0.05`.                                                    |
-| `large_perturbation_scale_factor` | Multiplier for what constitutes a “large” jump. Default: `5`.                                         |
-
----
-
-#### Biasing Strategy (`__init__`)
-
-| Parameter                        | Description                                                                 |
-|-----------------------------------|-----------------------------------------------------------------------------|
-| `bias_type`                      | `"constant"` \| `"smart"`                                                  |
-| `default_bias_height`             | Height of the default (constant) bias. Default: `10`.                      |
-| `default_bias_covariance`         | Covariance (variance) of the default bias. Default: `1`.                   |
-| `curvature_bias_height_scale`     | Multiplies curvature to determine bias height in `smart` mode.             |
-| `curvature_bias_covariance_scale` | Multiplies inverse curvature to determine bias covariance in `smart` mode. |
-
----
-
-#### Descent and Optimization (`__init__`)
-
-| Parameter                     | Description                                                              |
-|-------------------------------|--------------------------------------------------------------------------|
-| `optimizer`                   | Any supported SciPy optimizer, or `"steepest"` for simple gradient descent. |
-| `descent_convergence_threshold` | Threshold for convergence. Default: `1e-5`.                            |
-| `max_descent_steps`           | Maximum number of steps per descent. Default: `20`.                      |
-| `max_descent_step_size`       | Maximum allowed step size. Default: `1`.                                 |
-
----
-
-#### Run Control (`.run()`)
-
-| Parameter           | Description                                                        |
-|---------------------|--------------------------------------------------------------------|
-| `max_iterations`    | Number of iterations to run. Default: `100`.                       |
-| `starting_position` | Initial position vector.                                           |
-| `verbose`           | If `True`, prints progress and status updates. Default: `True`.    |
-| `max_steps`         | Maximum number of steps allowed.                                   |
-| `stopping_condition`| `"minima"` \| `"abc_iters"` \| `"steps"` \| `"force_calls"`        |
-
----
-
-## File Structure
-
-```text
-abc_runs/
-├── run_YYYYMMDD/                # Run-specific folder
-│   ├── history_000000-000123.h5 # Trajectory/energy/force chunks
-│   ├── history_000124-000256.h5 # (Next chunk)
-│   ├── biases.h5                # Growing list of all biases
-│   └── landmarks.h5             # Minima/saddles found
+```bash
+git clone https://github.com/SimonNir/ca_abc.git
+cd ca_abc
+pip install -e .
 ```
+
+
+**Dependencies:**
+
+  * Python 3.7+
+  * NumPy
+  * SciPy
+  * ASE (Atomic Simulation Environment)
+  * Matplotlib (for analysis)
+
+-----
+
+## Basic Usage
+
+```python
+from ca_abc import CurvatureAdaptiveABC
+from potentials import StandardMullerBrown2D
+
+# Initialize with your potential
+potential = StandardMullerBrown2D()
+abc = CurvatureAdaptiveABC(potential)
+
+# Run the simulation
+abc.run(max_iterations=100)
+
+# Access results
+print("Found minima:", abc.minima)
+print("Approximate saddles:", abc.saddles)
+```
+
+-----
+
+## Configuration Options
+
+Key parameters (see `ca_abc.py` for full list):
+
+**Perturbation:**
+
+  * `perturb_type`: "adaptive" (default) or "random"
+  * `default_perturbation_size`: Base step size (default 0.05)
+  * `scale_perturb_by_curvature`: Whether to scale steps by curvature (default True)
+
+**Biasing:**
+
+  * `bias_height_type`: "adaptive" (default) or "fixed"
+  * `default_bias_height`: Base bias height (default 1.0)
+  * `bias_covariance_type`: "adaptive" (default) or "isotropic"
+
+**Optimization:**
+
+  * `descent_convergence_threshold`: Force tolerance (default 1e-4)
+  * `max_descent_steps`: Maximum steps per descent (default 600)
+
+-----
+
+## Advanced Features
+
+### Custom Optimizers
+
+Use different optimizers by passing an optimizer instance:
+
+```python
+from optimizers import ASEOptimizer
+optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
+abc.run(optimizer=optimizer)
+```
+
+### Canonical Coordinates
+
+For molecular systems, use the canonical coordinate system:
+
+```python
+from potentials import CanonicalLennardJonesCluster
+potential = CanonicalLennardJonesCluster(num_atoms=38)
+abc = CurvatureAdaptiveABC(potential)
+```
+
+### Analysis and Visualization
+
+Use the built-in analysis tools:
+
+```python
+from analysis import ABCAnalysis
+analyzer = ABCAnalysis(abc)
+analyzer.plot_summary()
+```
+
+-----
+
+## Example Workflows
+
+### Basic Exploration
+
+```python
+from ca_abc import CurvatureAdaptiveABC
+from potentials import DoubleWell1D
+
+abc = CurvatureAdaptiveABC(DoubleWell1D())
+abc.run(max_iterations=50)
+abc.summarize()
+```
+
+### LJ Cluster Exploration
+
+```python
+from potentials import LennardJonesCluster
+
+lj38 = LennardJonesCluster(num_atoms=38)
+abc = CurvatureAdaptiveABC(lj38,
+                           bias_height_type="adaptive",
+                           bias_covariance_type="adaptive")
+abc.run(max_iterations=200, stopping_minima_number=5)
+```
+
+-----
+
+## Citation
+
+If you use CA-ABC in your research, please cite:
+
+Nirenberg, S., Ding, L., & Do, C. (2023). Curvature-Adaptive Autonomous Basin Climbing: Efficient Exploration of Rugged Energy Landscapes Without Collective Variables. \[Journal Name]
+
+-----
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+-----
+
+## Documentation
+
+Full API documentation is available in the code docstrings. Key classes:
+
+  * `CurvatureAdaptiveABC`: Main simulation class
+  * `GaussianBias`: Implements anisotropic bias potentials
+  * `ABCAnalysis`: Visualization and analysis tools
+
+-----
+
+## Contributing
+
+Contributions are welcome\! Please open an issue or pull request on GitHub.
+
+-----
+
+## Known Issues
+
+  * BFGS Hessian approximation degrades in extremely high dimensions (\>100D); Lanczos or Rayleigh methods likely become preferable 
+  * ASE interface may require configuration for some calculators
+
+-----
+
+## Support
+
+For questions or support, please contact simon\_nirenberg@brown.edu

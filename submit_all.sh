@@ -36,10 +36,10 @@ for run_id in $remaining_ids; do
 #SBATCH -p burst
 #SBATCH -A birthright
 
-echo "Running run_id=$1"
+echo "Running run_id=$run_id"
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
-python run_one.py $1
+python run_one.py $run_id
 EOF
 
     chmod +x $script

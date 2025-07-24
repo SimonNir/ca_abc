@@ -2,6 +2,7 @@
 #SBATCH --job-name=caabc_run_$1
 #SBATCH --output=logs/run_%a.out
 #SBATCH --error=logs/run_%a.err
+#SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --time=01:00:00

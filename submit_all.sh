@@ -26,6 +26,7 @@ for run_id in $remaining_ids; do
 #SBATCH --job-name=run_$run_id
 #SBATCH --output=logs/run_${run_id}.out
 #SBATCH --error=logs/run_${run_id}.err
+#SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --time=01:00:00

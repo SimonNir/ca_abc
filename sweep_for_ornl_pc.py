@@ -147,7 +147,7 @@ def single_run(args):
         )
 
         optimizer = FIREOptimizer(abc) if opt == 0 else ScipyOptimizer(abc)
-        abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=optimizer, verbose=False, save_summary=False)
+        abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=optimizer, verbose=True, save_summary=False)
 
         run_data = analyze_run(abc)
         run_data.update({
@@ -213,6 +213,10 @@ def merge_results():
 
 def main():
     import os
+    import time
+    from itertools import product
+    from multiprocessing import cpu_count
+
     print("SLURM_CPUS_PER_TASK =", os.environ.get("SLURM_CPUS_PER_TASK"))
 
     os.makedirs(RESULT_DIR, exist_ok=True)
@@ -227,9 +231,7 @@ def main():
     bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
     perturbations = [0.55, 0.01, 0.005, 0.001]
     optimizers = [0, 1]
-    seeds = [1,2,3,4,5,6,7,8,9,10]
-    # generate a thousand random combos log-linear sample of range 
-    # run 100 identical runs that each sample 100 random pairs 
+    seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     all_params = list(product(std_dev_scales, bias_height_fractions, perturbations, optimizers, seeds))
     indexed_params = [(i, *params) for i, params in enumerate(all_params)]
@@ -237,12 +239,11 @@ def main():
 
     print(f"{len(indexed_params)} runs remain to do.")
 
-    nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", cpu_count()))
     start_time = time.time()
 
     try:
-        with Pool(nprocs) as pool:
-            pool.map(single_run, indexed_params)
+        for params in indexed_params:
+            single_run(params)
         print(f"Sweep complete in {(time.time() - start_time)/60:.2f} minutes")
         merge_results()
     except KeyboardInterrupt:

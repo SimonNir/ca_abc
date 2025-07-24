@@ -131,6 +131,8 @@ class Complex1D(PotentialEnergySurface):
 
 import numpy as np
 
+import numpy as np
+
 class StandardMullerBrown2D(PotentialEnergySurface):
     """2D Muller-Brown potential."""
 
@@ -144,34 +146,31 @@ class StandardMullerBrown2D(PotentialEnergySurface):
         self.y0 = np.array([0, 0.5, 1.5, 1])
 
     def _potential(self, pos):
-        """Compute the Muller-Brown potential with numerical safeguards."""
         x, y = pos[0], pos[1]
 
-        V = 0.0
-        for i in range(4):
-            dx = x - self.x0[i]
-            dy = y - self.y0[i]
-            exponent = self.a[i]*dx**2 + self.b[i]*dx*dy + self.c[i]*dy**2
-            exponent = np.clip(exponent, -100, 100)
-            V += self.A[i] * np.exp(exponent)
+        dx = x - self.x0  # shape (4,)
+        dy = y - self.y0  # shape (4,)
+
+        exponent = self.a * dx**2 + self.b * dx * dy + self.c * dy**2
+        exponent = np.clip(exponent, -100, 100)
+
+        V = np.sum(self.A * np.exp(exponent))
         return V
 
     def _gradient(self, position):
         x, y = position[0], position[1]
 
-        dVdx = 0.0
-        dVdy = 0.0
+        dx = x - self.x0  # (4,)
+        dy = y - self.y0  # (4,)
 
-        for i in range(4):
-            dx = x - self.x0[i]
-            dy = y - self.y0[i]
-            exponent = self.a[i]*dx**2 + self.b[i]*dx*dy + self.c[i]*dy**2
-            exp_term = np.exp(np.clip(exponent, -100, 100))
-            dVdx += self.A[i] * exp_term * (2*self.a[i]*dx + self.b[i]*dy)
-            dVdy += self.A[i] * exp_term * (self.b[i]*dx + 2*self.c[i]*dy)
-        
-        grad = np.array([dVdx, dVdy])            
-        return grad 
+        exponent = self.a * dx**2 + self.b * dx * dy + self.c * dy**2
+        exponent = np.clip(exponent, -100, 100)
+        exp_term = np.exp(exponent)  # (4,)
+
+        dVdx = np.sum(self.A * exp_term * (2*self.a*dx + self.b*dy))
+        dVdy = np.sum(self.A * exp_term * (self.b*dx + 2*self.c*dy))
+
+        return np.array([dVdx, dVdy])
 
     def default_starting_position(self):
         return np.array([0.0, 0.0], dtype=float)
@@ -191,7 +190,6 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             np.array([0.212486582, 0.2929883251]),   # Transition A<-->B
             np.array([-0.8220015587, 0.6243128028])  # Transition B<-->C
         ]
-    
 
 # --- Now, a concrete implementation using ASE ---
 from ase import Atoms
@@ -220,7 +218,6 @@ class ASEPotentialEnergySurface(PotentialEnergySurface):
         # ASE returns forces, which are negative gradients
         forces = self.atoms.get_forces()
         return -forces.flatten() # Flatten to match your 'position' input shape
-
 
 from ase import Atoms
 from ase.calculators.lj import LennardJones
@@ -375,31 +372,32 @@ def internal_to_cartesian(x_internal, N, k=10):
 
 def cartesian_to_internal(pos, k=10):
     N = len(pos)
-    x_internal = []
 
     if N == 2:
-        x_internal.append(inverse_softplus(pos[1, 0], k))
-        return np.array(x_internal)
+        return np.array([inverse_softplus(pos[1, 0], k)])
 
     if N == 3:
-        x_internal.append(inverse_softplus(pos[1, 0], k))
-        x_internal.append(pos[2, 0])
-        x_internal.append(inverse_softplus(pos[2, 1], k))
-        return np.array(x_internal)
+        return np.array([
+            inverse_softplus(pos[1, 0], k),
+            pos[2, 0],
+            inverse_softplus(pos[2, 1], k)
+        ])
 
     # General case
-    x_internal.append(inverse_softplus(pos[1, 0], k))
-    x_internal.append(pos[2, 0])
-    x_internal.append(inverse_softplus(pos[2, 1], k))
+    x_internal = np.empty(3 * N - 6)
+    x_internal[0] = inverse_softplus(pos[1, 0], k)
+    x_internal[1] = pos[2, 0]
+    x_internal[2] = inverse_softplus(pos[2, 1], k)
 
+    # Flatten the rest
     rest = pos[3:]
-    x = rest[:, 0]
-    y = rest[:, 1]
-    z = inverse_softplus(rest[:, 2], k)
-    internal_rest = np.stack([x, y, z], axis=1).reshape(-1)
-    x_internal.extend(internal_rest)
+    x_internal[3:] = np.column_stack([
+        rest[:, 0],
+        rest[:, 1],
+        inverse_softplus(rest[:, 2], k)
+    ]).reshape(-1)
 
-    return np.array(x_internal)
+    return x_internal
 
 # === Uniform Sphere Sampling and Canonical Alignment ===
 def uniform_sphere_points(n):
@@ -412,8 +410,14 @@ def uniform_sphere_points(n):
     return np.vstack((x, y, z)).T
 
 def align_to_canonical(positions):
-    positions = positions - positions[0]  # atom 0 to origin
+    positions = positions - positions[0]  # Move atom 0 to origin
 
+    N = len(positions)
+    if N < 2:
+        # Nothing to do if only one atom
+        return positions.copy()
+
+    # --- Step 1: Rotate so atom 1 lies on x-axis ---
     v1 = positions[1]
     e1 = v1 / np.linalg.norm(v1)
 
@@ -423,11 +427,12 @@ def align_to_canonical(positions):
         v = np.cross(a, b)
         c = np.dot(a, b)
         if np.isclose(c, -1.0):
+            # 180 deg rotation around arbitrary orthogonal axis
             orth = np.array([1, 0, 0])
-            if (a == orth).all():
+            if np.allclose(a, orth):
                 orth = np.array([0, 1, 0])
             v = np.cross(a, orth)
-            v = v / np.linalg.norm(v)
+            v /= np.linalg.norm(v)
             return -np.eye(3) + 2 * np.outer(v, v)
         elif np.isclose(c, 1.0):
             return np.eye(3)
@@ -442,28 +447,31 @@ def align_to_canonical(positions):
     R1 = rotation_matrix_from_vectors(e1, np.array([1, 0, 0]))
     positions = positions @ R1.T
 
-    v2 = positions[2]
-    v2_proj = np.array([v2[0], v2[1], 0])
-    norm_proj = np.linalg.norm(v2_proj)
-    if norm_proj < 1e-8:
-        v2_proj = np.array([0, 1e-6, 0])
-        norm_proj = 1e-6
-    v2_proj /= norm_proj
-    angle = np.arctan2(v2[2], np.dot(v2, v2_proj))
-    Rx = np.array([
-        [1, 0, 0],
-        [0, np.cos(-angle), -np.sin(-angle)],
-        [0, np.sin(-angle),  np.cos(-angle)]
-    ])
-    positions = positions @ Rx.T
+    # --- Step 2: If at least 3 atoms, rotate atom 2 into xy-plane ---
+    if N > 2:
+        v2 = positions[2]
+        v2_proj = np.array([v2[0], v2[1], 0])
+        norm_proj = np.linalg.norm(v2_proj)
+        if norm_proj < 1e-8:
+            # Handle near-zero projection
+            v2_proj = np.array([0, 1e-6, 0])
+            norm_proj = 1e-6
+        v2_proj /= norm_proj
+        angle = np.arctan2(v2[2], np.dot(v2, v2_proj))
+        Rx = np.array([
+            [1, 0, 0],
+            [0, np.cos(-angle), -np.sin(-angle)],
+            [0, np.sin(-angle),  np.cos(-angle)]
+        ])
+        positions = positions @ Rx.T
 
-    if positions[2, 1] < 0:
-        positions[:, 1] = -positions[:, 1]
-    if len(positions) > 3 and positions[3, 2] < 0:
-        positions[:, 2] = -positions[:, 2]
+        # --- Step 3: Reflections for canonical orientation ---
+        if positions[2, 1] < 0:
+            positions[:, 1] = -positions[:, 1]
+        if N > 3 and positions[3, 2] < 0:
+            positions[:, 2] = -positions[:, 2]
 
-    return positions
-    
+    return positions    
 
 class CanonicalASEPES(PotentialEnergySurface):
     def __init__(self, atoms, k_soft=10):
@@ -500,36 +508,31 @@ class CanonicalASEPES(PotentialEnergySurface):
         
         return gradient
 
-    def _compute_jacobian(self, x_internal, eps=1e-6):
-        """
-        Compute the Jacobian matrix dr/dq using finite differences.
-        Returns a (3N x 3N-6) matrix where each column is dr/dq_i.
-        """
+    def compute_jacobian(x_internal, N, k_soft, eps=1e-6):
         n_internal = len(x_internal)
-        n_cartesian = 3 * self.N
-        
+        n_cartesian = 3 * N
         jacobian = np.zeros((n_cartesian, n_internal))
-        
-        # Reference position
-        pos_ref = internal_to_cartesian(x_internal, self.N, self.k_soft)
-        
+
+        x_perturbed = x_internal.copy()
+
         for i in range(n_internal):
-            # Perturb internal coordinate i
-            x_plus = x_internal.copy()
-            x_plus[i] += eps
-            pos_plus = internal_to_cartesian(x_plus, self.N, self.k_soft)
-            
-            x_minus = x_internal.copy()
-            x_minus[i] -= eps
-            pos_minus = internal_to_cartesian(x_minus, self.N, self.k_soft)
-            
-            # Compute derivative using central difference
-            jacobian[:, i] = (pos_plus.flatten() - pos_minus.flatten()) / (2 * eps)
-        
+            orig_val = x_perturbed[i]
+
+            x_perturbed[i] = orig_val + eps
+            pos_plus = internal_to_cartesian(x_perturbed, N, k_soft).flatten()
+
+            x_perturbed[i] = orig_val - eps
+            pos_minus = internal_to_cartesian(x_perturbed, N, k_soft).flatten()
+
+            jacobian[:, i] = (pos_plus - pos_minus) / (2 * eps)
+
+            x_perturbed[i] = orig_val
+
         return jacobian
 
     def _gradient_analytical(self, x_internal):
         """
+        DEPRECATED; CANNOT BE TRUSTED
         Alternative analytical gradient implementation for specific cases.
         This is more efficient but requires careful derivation of the transformations.
         """

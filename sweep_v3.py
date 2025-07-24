@@ -225,9 +225,11 @@ def main():
 
     std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
     bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
-    perturbations = [0.55, 0.01, 0.005, 0.001]
+    perturbations = [0.55, 0.001]
     optimizers = [0, 1]
-    seeds = [1,2,3,4,5,6,7,8,9,10]
+    # seeds = [1,2,3,4,5,6,7,8,9,10]
+    # generate a thousand random combos log-linear sample of range 
+    # run 100 identical runs that each sample 100 random pairs 
 
     all_params = list(product(std_dev_scales, bias_height_fractions, perturbations, optimizers, seeds))
     indexed_params = [(i, *params) for i, params in enumerate(all_params)]

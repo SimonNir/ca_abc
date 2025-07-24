@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import time
 from itertools import product
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 import os
 import json
 import glob
@@ -12,12 +12,29 @@ from ca_abc import CurvatureAdaptiveABC
 from potentials import StandardMullerBrown2D
 from optimizers import FIREOptimizer, ScipyOptimizer
 
-# --- Config ---
-RESULT_DIR = "abc_mb_results"
-FINAL_JSON = "new_mb_sweep.json"
-PAST_CSV = "new_mb_sweep.csv"  # Set to None if no past CSV to check
+# --- Fixed Defaults ---
+DEFAULT_PERTURB = 0.01
+DEFAULT_BIAS_HEIGHT = 3.8
+DEFAULT_BIAS_COV = (0.55 / 5) ** 2
 
-# --- Helpers ---
+# --- Sweep Parameters ---
+PERTURB_TYPES = ['fixed', 'adaptive']
+HEIGHT_TYPES = ['fixed', 'adaptive']
+COV_TYPES = ['fixed', 'adaptive']
+
+MAX_HEIGHT_FACTORS = [2.0, 3.0, 5.0, 10.0]
+MAX_COV_FACTORS = [2.0, 3.0, 5.0, 10.0]
+
+USE_CONSERVATIVE_DELTA = [True, False]
+SEEDS = list(range(10))
+OPTIMIZERS = [0, 1]  # 0 = FIRE, 1 = Scipy
+
+# --- Paths ---
+RESULT_DIR = "ca_abc_mb_results"
+FINAL_JSON = "ca_mb_sweep.json"
+PAST_CSV = None  # Set to None to disable
+
+# --- Utilities ---
 
 def parse_array_list_str(s):
     try:
@@ -46,7 +63,6 @@ def parse_complex_columns(df):
     return df
 
 def convert_numpy(obj):
-    """Recursively convert NumPy objects to native Python types."""
     if isinstance(obj, dict):
         return {k: convert_numpy(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -59,22 +75,6 @@ def convert_numpy(obj):
         return float(obj)
     else:
         return obj
-
-# --- Analysis ---
-
-def analyze_run(abc):
-    if not abc.saddles:
-        abc.summarize()
-
-    return {
-        'found_minima': abc.minima,
-        'found_saddles': abc.saddles,
-        'bias_count': len(abc.bias_list),
-        'energy_calls_at_each_min': abc.energy_calls_at_each_min if abc.energy_calls_at_each_min else np.nan,
-        'force_calls_at_each_min': abc.force_calls_at_each_min if abc.force_calls_at_each_min else np.nan,
-    }
-
-# --- Utilities ---
 
 def get_completed_runs_from_csv(csv_path):
     if not csv_path or not os.path.isfile(csv_path):
@@ -103,21 +103,26 @@ def get_completed_runs_from_jsons(results_dir):
             continue
     return completed
 
-# --- Core Execution ---
+# --- Run and Analyze ---
+
+def analyze_run(abc):
+    if not abc.saddles:
+        abc.summarize()
+
+    return {
+        'found_minima': abc.minima,
+        'found_saddles': abc.saddles,
+        'bias_count': len(abc.bias_list),
+        'energy_calls_at_each_min': abc.energy_calls_at_each_min if abc.energy_calls_at_each_min else np.nan,
+        'force_calls_at_each_min': abc.force_calls_at_each_min if abc.force_calls_at_each_min else np.nan,
+    }
 
 def single_run(args):
-    run_id, std_scale, height_frac, perturb, opt, seed = args
+    run_id, seed, opt, perturb_type, height_type, cov_type, max_h_factor, max_cov_factor, max_p_factor, use_conservative = args
 
-    expected_barrier = 38.0
-    expected_length_scale = 0.55
-
-    bias_stdv = expected_length_scale * std_scale
-    bias_cov = bias_stdv ** 2
-    bias_height = expected_barrier * height_frac
+    np.random.seed(seed)
 
     try:
-        np.random.seed(seed)
-
         abc = CurvatureAdaptiveABC(
             potential=StandardMullerBrown2D(),
             starting_position=[0.0, 0.0],
@@ -125,21 +130,23 @@ def single_run(args):
             dump_every=30000,
             dump_folder=f"{RESULT_DIR}/run_{run_id}",
 
-            perturb_type="fixed",
-            default_perturbation_size=perturb,
+            perturb_type=perturb_type,
+            default_perturbation_size=DEFAULT_PERTURB,
+            max_perturbation_size=DEFAULT_PERTURB * max_p_factor,
             scale_perturb_by_curvature=False,
             curvature_perturbation_scale=0.0,
-            max_perturbation_size=perturb * 5,
 
-            bias_height_type="fixed",
-            default_bias_height=bias_height,
-            max_bias_height=bias_height * 3,
+            bias_height_type=height_type,
+            default_bias_height=DEFAULT_BIAS_HEIGHT,
+            max_bias_height=DEFAULT_BIAS_HEIGHT * max_h_factor,
             curvature_bias_height_scale=0.0,
 
-            bias_covariance_type="fixed",
-            default_bias_covariance=bias_cov,
-            max_bias_covariance=bias_cov * 5,
+            bias_covariance_type=cov_type,
+            default_bias_covariance=DEFAULT_BIAS_COV,
+            max_bias_covariance=DEFAULT_BIAS_COV * max_cov_factor,
             curvature_bias_covariance_scale=0.0,
+
+            use_conservative_ems_delta=use_conservative,
 
             max_descent_steps=1000,
             descent_convergence_threshold=1e-5,
@@ -153,12 +160,17 @@ def single_run(args):
         run_data.update({
             'run_id': run_id,
             'seed': seed,
-            'bias_std_dev_scale': std_scale,
-            'bias_covariance': bias_cov,
-            'bias_height_fraction': height_frac,
-            'bias_height': bias_height,
-            'perturbation_size': perturb,
-            'optimizer': 'FIRE' if opt == 0 else 'Scipy'
+            'optimizer': 'FIRE' if opt == 0 else 'Scipy',
+            'perturb_type': perturb_type,
+            'bias_height_type': height_type,
+            'bias_covariance_type': cov_type,
+            'use_conservative_ems_delta': use_conservative,
+            'default_perturbation_size': DEFAULT_PERTURB,
+            'default_bias_height': DEFAULT_BIAS_HEIGHT,
+            'default_bias_cov': DEFAULT_BIAS_COV,
+            'max_perturbation_size': DEFAULT_PERTURB * max_p_factor,
+            'max_bias_height': DEFAULT_BIAS_HEIGHT * max_h_factor,
+            'max_bias_cov': DEFAULT_BIAS_COV * max_cov_factor,
         })
 
         run_data = convert_numpy(run_data)
@@ -173,6 +185,8 @@ def single_run(args):
     except Exception as e:
         print(f"Run {run_id} failed with error: {e}")
         return False
+
+# --- Merging Results ---
 
 def merge_results():
     print("Merging individual JSON files into final JSON...")
@@ -199,7 +213,6 @@ def merge_results():
         except Exception as e:
             print(f"Failed to merge past CSV: {e}")
 
-    # Convert numpy-like objects to Python-native JSON-safe types
     dicts = df_json.to_dict(orient="records")
     dicts = [convert_numpy(d) for d in dicts]
 
@@ -212,42 +225,41 @@ def merge_results():
 # --- Entry Point ---
 
 def main():
-    import os
-    print("SLURM_CPUS_PER_TASK =", os.environ.get("SLURM_CPUS_PER_TASK"))
-
     os.makedirs(RESULT_DIR, exist_ok=True)
 
-    completed_from_csv = get_completed_runs_from_csv(PAST_CSV)
-    completed_from_json = get_completed_runs_from_jsons(RESULT_DIR)
-    completed_runs = completed_from_csv.union(completed_from_json)
+    completed_csv = get_completed_runs_from_csv(PAST_CSV)
+    completed_json = get_completed_runs_from_jsons(RESULT_DIR)
+    completed = completed_csv.union(completed_json)
 
-    print(f"Detected {len(completed_runs)} completed runs to skip.")
+    print(f"Detected {len(completed)} completed runs to skip.")
 
-    std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
-    bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
-    perturbations = [0.55, 0.001]
-    optimizers = [0, 1]
-    # seeds = [1,2,3,4,5,6,7,8,9,10]
-    # generate a thousand random combos log-linear sample of range 
-    # run 100 identical runs that each sample 100 random pairs 
+    sweep = list(product(
+        SEEDS,
+        OPTIMIZERS,
+        PERTURB_TYPES,
+        HEIGHT_TYPES,
+        COV_TYPES,
+        MAX_HEIGHT_FACTORS,
+        MAX_COV_FACTORS,
+        USE_CONSERVATIVE_DELTA,
+    ))
 
-    all_params = list(product(std_dev_scales, bias_height_fractions, perturbations, optimizers, seeds))
-    indexed_params = [(i, *params) for i, params in enumerate(all_params)]
-    indexed_params = [p for p in indexed_params if p[0] not in completed_runs]
+    all_params = [(i, *params) for i, params in enumerate(sweep)]
+    todo_params = [p for p in all_params if p[0] not in completed]
 
-    print(f"{len(indexed_params)} runs remain to do.")
+    print(f"{len(todo_params)} runs remain to do.")
 
     nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", 32))
     start_time = time.time()
 
     try:
         with Pool(nprocs) as pool:
-            pool.map(single_run, indexed_params)
+            pool.map(single_run, todo_params)
         print(f"Sweep complete in {(time.time() - start_time)/60:.2f} minutes")
         merge_results()
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Exiting.")
-        os._exit(1)  # hard kill immediately
+        print("Interrupted by user. Exiting.")
+        os._exit(1)
 
 if __name__ == "__main__":
     main()

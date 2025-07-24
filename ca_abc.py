@@ -206,76 +206,76 @@ class CurvatureAdaptiveABC:
         self.current_iteration += 1
 
     # Core functionality (adapted from TraditionalABC with enhancements)
+
+    def update_bias_cache(self):
+        """Call this to rebuild cached vectorized arrays when bias_list changes."""
+        if not self.bias_list:
+            self._bias_centers = np.empty((0, self.position.size))
+            self._bias_heights = np.array([])
+            self._bias_inv_covs = np.empty((0, self.position.size, self.position.size))
+        else:
+            self._bias_centers = np.array([b.center for b in self.bias_list])
+            self._bias_heights = np.array([b.height for b in self.bias_list])
+            self._bias_inv_covs = np.stack([b._cov_inv for b in self.bias_list])
+        self._bias_cache_valid = True
     
     def compute_biased_potential(self, position, unbiased: float = None) -> float:
-        """Fully vectorized potential computation with empty bias list handling."""
-
         V = self.potential.potential(position) if unbiased is None else unbiased
-        
-        # Early return if no biases
+
         if not self.bias_list:
             return V
-        
-        # Vectorized bias potential calculation
-        centers = np.array([b.center for b in self.bias_list])
-        covs = np.stack([np.atleast_2d(b.covariance) for b in self.bias_list])  # Ensure each covariance is 2D
-        heights = np.array([b.height for b in self.bias_list])
-        
-        position = np.atleast_1d(position).reshape(1, -1)  # shape (1, d)
-        diffs = position - centers
-        inv_covs = np.linalg.inv(covs)
 
-        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
-        V += np.sum(heights * np.exp(exponents))
-        
+        # Use cached arrays
+        if not getattr(self, "_bias_cache_valid", False):
+            self.update_bias_cache()
+
+        pos = np.atleast_2d(position).reshape(1, -1)  # (1, d)
+        diffs = pos - self._bias_centers              # (N_bias, d)
+        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, self._bias_inv_covs, diffs)  # (N_bias,)
+        V += np.sum(self._bias_heights * np.exp(exponents))
         return V
 
     def compute_biased_force(self, position, unbiased: np.ndarray = None, eps=1e-5) -> np.ndarray:
-        """Fully vectorized force computation with empty bias list handling."""
-
         if unbiased is None:
             try:
                 unbiased = -self.potential.gradient(position)
             except NotImplementedError:
-                # Optimized finite difference
+                # Finite difference fallback
                 force = np.zeros_like(position)
                 pos = position.copy()
                 eps_vec = np.zeros_like(position)
-                
                 for i in range(len(position)):
                     eps_vec[i] = eps
                     V_plus = self.compute_biased_potential(pos + eps_vec)
                     V_minus = self.compute_biased_potential(pos - eps_vec)
                     eps_vec[i] = 0
                     force[i] = -(V_plus - V_minus) / (2 * eps)
-                
-                if (norm := np.linalg.norm(force)) > self.max_acceptable_force_mag:
+                norm = np.linalg.norm(force)
+                if norm > self.max_acceptable_force_mag:
                     force = self.max_acceptable_force_mag * force / norm
-                return np.array(force)
-        
-        # Early return if no biases
+                return force
+
         if not self.bias_list:
             return unbiased.copy()
-        
-        # Vectorized bias gradient calculation
-        centers = np.array([b.center for b in self.bias_list])
-        covs = np.stack([np.atleast_2d(b.covariance) for b in self.bias_list])  # Ensure each covariance is 2D
-        heights = np.array([b.height for b in self.bias_list])
-        
-        position = np.atleast_1d(position).reshape(1, -1)  # shape (1, d)
-        diffs = position - centers                      # shape (N, D)
-        inv_covs = np.linalg.inv(covs)                 # shape (N, D, D)
-        
-        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
-        mv_products = np.einsum('nij,nj->ni', inv_covs, diffs)  # shape (N, D)
-        grads = -mv_products * (heights * np.exp(exponents))[:, None]  # shape (N, D)
-        total_grad = -np.array(unbiased.copy()) + np.sum(grads, axis=0)
-        
+
+        if not getattr(self, "_bias_cache_valid", False):
+            self.update_bias_cache()
+
+        pos = np.atleast_2d(position).reshape(1, -1)  # (1, d)
+        diffs = pos - self._bias_centers               # (N_bias, d)
+
+        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, self._bias_inv_covs, diffs)  # (N_bias,)
+        mv_products = np.einsum('nij,nj->ni', self._bias_inv_covs, diffs)                # (N_bias, d)
+
+        grads = -mv_products * (self._bias_heights * np.exp(exponents))[:, None]        # (N_bias, d)
+        total_grad = -unbiased + np.sum(grads, axis=0)                                 # (d,)
+
         force = -total_grad
-        if (norm := np.linalg.norm(force)) > self.max_acceptable_force_mag:
+        norm = np.linalg.norm(force)
+        if norm > self.max_acceptable_force_mag:
             print(f"Warning: Clipping force magnitude from {norm:.1f} to {self.max_acceptable_force_mag}")
             force = self.max_acceptable_force_mag * force / norm
-        
+
         return force
     
     def compute_hessian_finite_difference(self, position, f0_already_computed=False, eps=1e-3):
@@ -317,7 +317,7 @@ class CurvatureAdaptiveABC:
         if height is not None:
             h = height
         else:
-            if self.bias_height_type == "adaptive":
+            if self.bias_height_type == "adaptive" and self.most_recent_hessian is not None:
                 _, curvature = self.get_softest_hessian_mode(center)
 
                 if self.use_ema_adaptive_scaling:
@@ -408,6 +408,9 @@ class CurvatureAdaptiveABC:
 
         bias = GaussianBias(center=pos, covariance=clipped_cov, height=clipped_h)
         self.bias_list.append(bias)
+
+        # Update cache after adding new bias
+        self.update_bias_cache()
 
         # if verbose and self.bias_covariance_type.lower() == "adaptive":
         #     approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
@@ -618,30 +621,34 @@ class CurvatureAdaptiveABC:
         if optimizer is None:
             optimizer = ScipyOptimizer(self)
         self.optimizer = optimizer
+
+        try:         
+            for iteration in range(self.current_iteration, max_iterations):
+
+                converged = self.descend()
+
+                pos = self.position.copy()
+
+                self.perturb(type=self.perturb_type, verbose=verbose)
+
+                self.deposit_bias(pos, verbose=verbose)
+                    
+                self.update_records()
+
+                if stopping_minima_number is not None and len(self.minima) >= stopping_minima_number: 
+                    break  
+                    
+                if verbose:
+                    print(f"Iteration {iteration+1}/{max_iterations}: "
+                        f"Descent converged: {converged}, "
+                        f"Position:{self.position}, "
+                        f"Energy: {self.unbiased_energies[-1]}")
+                    print()
+
+            print(f"Simulation completed.\n")
+        except KeyboardInterrupt:
+            print("Simulation Interrupted.\n")
         
-        for iteration in range(self.current_iteration, max_iterations):
-
-            converged = self.descend()
-
-            pos = self.position.copy()
-
-            self.perturb(type=self.perturb_type, verbose=verbose)
-
-            self.deposit_bias(pos, verbose=verbose)
-                
-            self.update_records()
-
-            if stopping_minima_number is not None and len(self.minima) >= stopping_minima_number: 
-                break  
-                
-            if verbose:
-                print(f"Iteration {iteration+1}/{max_iterations}: "
-                    f"Descent converged: {converged}, "
-                    f"Position:{self.position}, "
-                    f"Energy: {self.unbiased_energies[-1]}")
-                print()
-        
-        print(f"Simulation completed.\n")
         try: 
             self.summarize(save=save_summary, filename=summary_file)
         except Exception as e:

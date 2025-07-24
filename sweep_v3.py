@@ -225,9 +225,9 @@ def main():
 
     std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
     bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
-    perturbations = [0.55, 0.001]
+    perturbations = [0.55, 0.01, 0.005, 0.001]
     optimizers = [0, 1]
-    # seeds = [1,2,3,4,5,6,7,8,9,10]
+    seeds = [1,2,3,4,5,6,7,8,9,10]
     # generate a thousand random combos log-linear sample of range 
     # run 100 identical runs that each sample 100 random pairs 
 
@@ -237,7 +237,7 @@ def main():
 
     print(f"{len(indexed_params)} runs remain to do.")
 
-    nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", 32))
+    nprocs = int(os.environ.get("SLURM_CPUS_PER_TASK", cpu_count()))
     start_time = time.time()
 
     try:
@@ -251,3 +251,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+""" 
+Future plan: 
+
+parser arguments to determine which batches to run 
+save each to 1 json at the end, and then combine in your submitter batch script 
+
+each job run 25
+wrap the python code in an bash for loop
+1 batch script to submit a for loop of sbatch 
+
+mpirun
+
+parser arguments to determine which batches to run 
+save each to 1 json at the end, and then combine in your submitter batch script
+"""

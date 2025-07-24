@@ -1,0 +1,31 @@
+Running run_id=1967
+Identified minimum at [0.62349941 0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001086  0.46669412] with energy -80.76781812965885
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.62349941 0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001086  0.46669412], Energy = -80.76781812965885
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.23144762 0.28978493], Energy = -72.24819201946153
+
+Computational statistics:
+	Total energy calls: 608889
+	Energy calls at each min: [101, 134194]
+	Total force calls: 608889
+	Force calls at each min: [101, 134194]
+	Total steps: 637505
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.55822363  1.44172584]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Completed run 1967 | seed 8 | optimizer FIREOptimizer

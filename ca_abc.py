@@ -317,7 +317,7 @@ class CurvatureAdaptiveABC:
         if height is not None:
             h = height
         else:
-            if self.bias_height_type == "adaptive":
+            if self.bias_height_type == "adaptive" and self.most_recent_hessian is not None:
                 _, curvature = self.get_softest_hessian_mode(center)
 
                 if self.use_ema_adaptive_scaling:
@@ -621,30 +621,34 @@ class CurvatureAdaptiveABC:
         if optimizer is None:
             optimizer = ScipyOptimizer(self)
         self.optimizer = optimizer
+
+        try:         
+            for iteration in range(self.current_iteration, max_iterations):
+
+                converged = self.descend()
+
+                pos = self.position.copy()
+
+                self.perturb(type=self.perturb_type, verbose=verbose)
+
+                self.deposit_bias(pos, verbose=verbose)
+                    
+                self.update_records()
+
+                if stopping_minima_number is not None and len(self.minima) >= stopping_minima_number: 
+                    break  
+                    
+                if verbose:
+                    print(f"Iteration {iteration+1}/{max_iterations}: "
+                        f"Descent converged: {converged}, "
+                        f"Position:{self.position}, "
+                        f"Energy: {self.unbiased_energies[-1]}")
+                    print()
+
+            print(f"Simulation completed.\n")
+        except KeyboardInterrupt:
+            print("Simulation Interrupted.\n")
         
-        for iteration in range(self.current_iteration, max_iterations):
-
-            converged = self.descend()
-
-            pos = self.position.copy()
-
-            self.perturb(type=self.perturb_type, verbose=verbose)
-
-            self.deposit_bias(pos, verbose=verbose)
-                
-            self.update_records()
-
-            if stopping_minima_number is not None and len(self.minima) >= stopping_minima_number: 
-                break  
-                
-            if verbose:
-                print(f"Iteration {iteration+1}/{max_iterations}: "
-                    f"Descent converged: {converged}, "
-                    f"Position:{self.position}, "
-                    f"Energy: {self.unbiased_energies[-1]}")
-                print()
-        
-        print(f"Simulation completed.\n")
         try: 
             self.summarize(save=save_summary, filename=summary_file)
         except Exception as e:

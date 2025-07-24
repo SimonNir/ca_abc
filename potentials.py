@@ -508,7 +508,9 @@ class CanonicalASEPES(PotentialEnergySurface):
         
         return gradient
 
-    def compute_jacobian(x_internal, N, k_soft, eps=1e-6):
+    def _compute_jacobian(self, x_internal, eps=1e-6):
+        N = self.N
+        k_soft = self.k_soft
         n_internal = len(x_internal)
         n_cartesian = 3 * N
         jacobian = np.zeros((n_cartesian, n_internal))

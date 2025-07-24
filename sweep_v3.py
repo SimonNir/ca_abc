@@ -250,6 +250,20 @@ def main():
         os._exit(1)  # hard kill immediately
 
 if __name__ == "__main__":
-    # parser arguments to determine which batches to run 
-    # save each to 1 json at the end, and then combine in your submitter batch script 
     main()
+
+""" 
+Future plan: 
+
+parser arguments to determine which batches to run 
+save each to 1 json at the end, and then combine in your submitter batch script 
+
+each job run 25
+wrap the python code in an bash for loop
+1 batch script to submit a for loop of sbatch 
+
+mpirun
+
+parser arguments to determine which batches to run 
+save each to 1 json at the end, and then combine in your submitter batch script
+"""

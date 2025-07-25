@@ -1,45 +1,46 @@
 #!/bin/bash
 mkdir -p jobs logs
 
-# Python snippet to get the list of remaining run_ids
+# Get all remaining run_ids
 remaining_ids=$(python -c "
-from sweep_v3 import get_completed_runs_from_csv, get_completed_runs_from_jsons, RESULT_DIR, PAST_CSV
-from itertools import product
-
-std_dev_scales = [1/3, 1/5, 1/8, 1/10, 1/14]
-bias_height_fractions = [1/5, 1/10, 1/30, 1/50, 1/100]
-perturbations = [0.55, 0.01, 0.005, 0.001]
-optimizers = [0, 1]
-seeds = [1,2,3,4,5,6,7,8,9,10]
-all_params = list(product(std_dev_scales, bias_height_fractions, perturbations, optimizers, seeds))
-indexed_params = [(i, *params) for i, params in enumerate(all_params)]
-
-completed = get_completed_runs_from_csv(PAST_CSV).union(get_completed_runs_from_jsons(RESULT_DIR))
-remaining = [str(i) for i, *_ in indexed_params if i not in completed]
+from sweep_v3 import get_all_run_params, get_completed_runs, RESULT_DIR
+all_runs = get_all_run_params()
+completed = get_completed_runs(RESULT_DIR)
+remaining = [str(r[0]) for r in all_runs if r[0] not in completed]
 print(' '.join(remaining))
 ")
 
-for run_id in $remaining_ids; do
-    script="jobs/job_$run_id.sh"
+# Split into chunks for each core
+NUM_CORES=100
+readarray -t id_array <<< "$(echo $remaining_ids | tr ' ' '\n' | shuf)"
+ids_per_core=$(( (${#id_array[@]} + NUM_CORES - 1) / NUM_CORES ))
+
+for core_id in $(seq 0 $((NUM_CORES - 1))); do
+    start=$((core_id * ids_per_core))
+    end=$((start + ids_per_core))
+    core_run_ids="${id_array[@]:start:ids_per_core}"
+    
+    if [ -z "$core_run_ids" ]; then
+        continue
+    fi
+
+    script="jobs/job_${core_id}.sh"
     cat <<EOF > $script
 #!/bin/bash
-#SBATCH --job-name=run_$run_id
-#SBATCH --output=logs/run_${run_id}.out
-#SBATCH --error=logs/run_${run_id}.err
+#SBATCH --job-name=abc_${core_id}
+#SBATCH --output=logs/abc_${core_id}.out
+#SBATCH --error=logs/abc_${core_id}.err
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=2G
-
-
 #SBATCH -p burst
 #SBATCH -A birthright
 
-echo "Running run_id=$run_id"
 source ~/abc_venv/bin/activate
-export PYTHONPATH=$PYTHONPATH:$(pwd)
-python run_one.py $run_id
+export PYTHONPATH=\$PYTHONPATH:\$(pwd)
+python run_one.py ${core_run_ids}
 EOF
 
     chmod +x $script

@@ -38,7 +38,7 @@ def run_2d_simulation():
     )
     
     opt = FIREOptimizer(abc)  
-    abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=opt, verbose=True)
+    abc.run(max_iterations=5000, stopping_minima_number=1, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)

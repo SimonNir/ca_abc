@@ -1,0 +1,26 @@
+[project]
+name = "ca_abc"
+version = "0.1.0"
+description = "Curvature-Adaptive Autonomous Basin Climbing"
+author = [
+    { name = "Simon Nirenberg", email = "simon_nirenberg@brown.edu" }
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "ase",
+    "pandas",
+]
+readme = "README.md"
+requires-python = ">=3.8"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

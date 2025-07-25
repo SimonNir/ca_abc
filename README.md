@@ -15,6 +15,7 @@ A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algo
 ## Installation
 
 ```bash
+pip install -r requirements.txt 
 git clone https://github.com/SimonNir/ca_abc.git
 cd ca_abc
 pip install -e .

@@ -1,7 +1,7 @@
 from copy import deepcopy
 import numpy as np
 from ca_abc.bias import GaussianBias
-from ca_abc.optimizers import ScipyOptimizer
+from ca_abc.optimizers import FIREOptimizer
 import os
 import pickle
 import sys
@@ -623,7 +623,7 @@ class CurvatureAdaptiveABC:
         """
         
         if optimizer is None:
-            optimizer = ScipyOptimizer(self)
+            optimizer = FIREOptimizer(self)
         self.optimizer = optimizer
 
         try:         

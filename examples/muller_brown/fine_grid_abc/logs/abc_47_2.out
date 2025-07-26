@@ -1,0 +1,62 @@
+Starting run 1437
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55821892  1.44173369] with energy -146.69951718380057
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55821892  1.44173369], Energy = -146.69951718380057
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.25396188  0.44856431], Energy = -75.45507671757187
+
+Computational statistics:
+	Total energy calls: 94501
+	Energy calls at each min: [1, 1025]
+	Total force calls: 94501
+	Force calls at each min: [1, 1025]
+	Total steps: 46853
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 1673
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55822364  1.44172583] with energy -146.699517209954
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55822364  1.44172583], Energy = -146.699517209954
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.23449827 0.10019395], Energy = -80.36494702076041
+
+Computational statistics:
+	Total energy calls: 111982
+	Energy calls at each min: [1, 499]
+	Total force calls: 111982
+	Force calls at each min: [1, 499]
+	Total steps: 52419
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]

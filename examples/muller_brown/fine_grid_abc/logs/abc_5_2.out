@@ -1,0 +1,59 @@
+Starting run 1586
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001079  0.4666941 ] with energy -80.76781812965886
+Identified minimum at [-0.55822364  1.44172583] with energy -146.699517209954
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001079  0.4666941 ], Energy = -80.76781812965886
+Minimum 3: Position = [-0.55822364  1.44172583], Energy = -146.699517209954
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.25733803 0.28510566], Energy = -72.25367382646239
+Saddle 2: Position = [-0.82427181  0.62071683], Energy = -40.660603800123845
+
+Computational statistics:
+	Total energy calls: 39376
+	Energy calls at each min: [1, 7837, 39376]
+	Total force calls: 39376
+	Force calls at each min: [1, 7837, 39376]
+	Total steps: 41482
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 2/2
+Starting run 400
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55696668  1.44336426] with energy -146.6985091648139
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55696668  1.44336426], Energy = -146.6985091648139
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.88285932  0.59004239], Energy = -39.8372931781429
+
+Computational statistics:
+	Total energy calls: 762125
+	Energy calls at each min: [1, 3039]
+	Total force calls: 762125
+	Force calls at each min: [1, 3039]
+	Total steps: 791938
+
+Verification against reference:
+True minima found: 1/3
+Missed minima at positions:
+[-0.55822363  1.44172584]
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]

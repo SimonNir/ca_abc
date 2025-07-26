@@ -1,0 +1,60 @@
+Starting run 1760
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001082  0.46669411] with energy -80.76781812965903
+Identified minimum at [-0.55822362  1.44172585] with energy -146.69951720995394
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001082  0.46669411], Energy = -80.76781812965903
+Minimum 3: Position = [-0.55822362  1.44172585], Energy = -146.69951720995394
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.12014546 0.23459445], Energy = -69.39393828860725
+Saddle 2: Position = [-0.33274209  0.15484034], Energy = -29.756133500698592
+
+Computational statistics:
+	Total energy calls: 23620
+	Energy calls at each min: [1, 3419, 23620]
+	Total force calls: 23620
+	Force calls at each min: [1, 3419, 23620]
+	Total steps: 24915
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 58
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55822035  1.44173004] with energy -146.69951720336425
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55822035  1.44173004], Energy = -146.69951720336425
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.86039835  0.61459197], Energy = -40.60451512015009
+
+Computational statistics:
+	Total energy calls: 774526
+	Energy calls at each min: [1, 24297]
+	Total force calls: 774526
+	Force calls at each min: [1, 24297]
+	Total steps: 795980
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[0.21248658 0.29298833]

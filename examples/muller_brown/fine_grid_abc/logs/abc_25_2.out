@@ -1,0 +1,61 @@
+Starting run 1625
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55822272  1.44172746] with energy -146.69951720879317
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55822272  1.44172746], Energy = -146.69951720879317
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.35366511  0.40952698], Energy = -66.90056619926315
+
+Computational statistics:
+	Total energy calls: 124902
+	Energy calls at each min: [1, 274]
+	Total force calls: 124902
+	Force calls at each min: [1, 274]
+	Total steps: 55351
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 1796
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001078  0.4666941 ] with energy -80.7678181296588
+Identified minimum at [-0.55822362  1.44172586] with energy -146.69951720995385
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001078  0.4666941 ], Energy = -80.7678181296588
+Minimum 3: Position = [-0.55822362  1.44172586], Energy = -146.69951720995385
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.21668896 0.29331559], Energy = -72.2464573876212
+Saddle 2: Position = [-0.815635    0.62611687], Energy = -40.6625110701315
+
+Computational statistics:
+	Total energy calls: 168392
+	Energy calls at each min: [1, 23730, 168392]
+	Total force calls: 168392
+	Force calls at each min: [1, 23730, 168392]
+	Total steps: 176538
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 2/2

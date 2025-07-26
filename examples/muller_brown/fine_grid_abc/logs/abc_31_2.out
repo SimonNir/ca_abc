@@ -1,0 +1,64 @@
+Starting run 5
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55819871  1.44177123] with energy -146.6995162780195
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55819871  1.44177123], Energy = -146.69951627765215
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.1834868  0.11673019], Energy = -74.98481387389926
+
+Computational statistics:
+	Total energy calls: 113928
+	Energy calls at each min: [1, 233]
+	Total force calls: 113928
+	Force calls at each min: [1, 233]
+	Total steps: 52109
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 238
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55814328  1.44183349] with energy -146.69951282888255
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55814328  1.44183349], Energy = -146.69951282888255
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.85665097  0.58086328], Energy = -39.87278114246624
+
+Computational statistics:
+	Total energy calls: 752864
+	Energy calls at each min: [1, 25585]
+	Total force calls: 752864
+	Force calls at each min: [1, 25585]
+	Total steps: 773643
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]

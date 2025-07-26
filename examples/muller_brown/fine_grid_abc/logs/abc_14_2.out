@@ -1,0 +1,59 @@
+Starting run 592
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001079  0.4666941 ] with energy -80.76781812965888
+Identified minimum at [-0.55822362  1.44172586] with energy -146.69951720995388
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001079  0.4666941 ], Energy = -80.76781812965888
+Minimum 3: Position = [-0.55822362  1.44172586], Energy = -146.69951720995388
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.20810917 0.2955945 ], Energy = -72.25459096128785
+Saddle 2: Position = [-0.8431666   0.61516466], Energy = -40.5989673779078
+
+Computational statistics:
+	Total energy calls: 100960
+	Energy calls at each min: [1, 17151, 100960]
+	Total force calls: 100960
+	Force calls at each min: [1, 17151, 100960]
+	Total steps: 106044
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 2/2
+Starting run 697
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55822363  1.44172584] with energy -146.69951720995402
+Identified minimum at [-0.05050899  0.46682481] with energy -80.7677857908037
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55822363  1.44172584], Energy = -146.69951720995402
+Minimum 3: Position = [-0.05050899  0.46682481], Energy = -80.7677857908037
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.09072481 0.45975173], Energy = -78.4417047803928
+Saddle 2: Position = [-0.16787515  0.46312287], Energy = -79.10312915057456
+
+Computational statistics:
+	Total energy calls: 3180
+	Energy calls at each min: [1, 889, 3180]
+	Total force calls: 3180
+	Force calls at each min: [1, 889, 3180]
+	Total steps: 1845
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]

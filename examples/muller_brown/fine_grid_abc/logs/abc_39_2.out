@@ -1,0 +1,60 @@
+Starting run 1636
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55813968  1.44183571] with energy -146.6995126753593
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55813968  1.44183571], Energy = -146.6995126753593
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.83935039  0.59307275], Energy = -40.36093459122838
+
+Computational statistics:
+	Total energy calls: 761614
+	Energy calls at each min: [1, 15838]
+	Total force calls: 761614
+	Force calls at each min: [1, 15838]
+	Total steps: 783135
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+Starting run 1589
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001082  0.4666941 ] with energy -80.76781812965902
+Identified minimum at [-0.55822364  1.44172584] with energy -146.699517209954
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001082  0.4666941 ], Energy = -80.76781812965902
+Minimum 3: Position = [-0.55822364  1.44172584], Energy = -146.699517209954
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.14324088  0.40152505], Energy = -76.02286805334306
+Saddle 2: Position = [-0.30594587  0.48675939], Energy = -73.9156198213275
+
+Computational statistics:
+	Total energy calls: 1701
+	Energy calls at each min: [1, 1418, 1701]
+	Total force calls: 1701
+	Force calls at each min: [1, 1418, 1701]
+	Total steps: 900
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]

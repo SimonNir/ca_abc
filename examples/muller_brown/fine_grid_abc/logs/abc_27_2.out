@@ -1,0 +1,62 @@
+Starting run 403
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.5581359  1.4418741] with energy -146.69950778130143
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Desired error not necessarily achieved due to precision loss.
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.5581359  1.4418741], Energy = -146.69950778130143
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.34425349  0.4332676 ], Energy = -69.68742068415033
+
+Computational statistics:
+	Total energy calls: 119010
+	Energy calls at each min: [1, 215]
+	Total force calls: 119010
+	Force calls at each min: [1, 215]
+	Total steps: 53494
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 474
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.55822361  1.44172587] with energy -146.6995172099536
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.55822361  1.44172587], Energy = -146.6995172099536
+
+Approximate saddle points between minima:
+Saddle 1: Position = [-0.8501112   0.61349231], Energy = -40.57090133601457
+
+Computational statistics:
+	Total energy calls: 685143
+	Energy calls at each min: [1, 21569]
+	Total force calls: 685143
+	Force calls at each min: [1, 21569]
+	Total steps: 709049
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[0.21248658 0.29298833]

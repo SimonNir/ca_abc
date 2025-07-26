@@ -1,4 +1,5 @@
 #!/bin/bash
+
 mkdir -p jobs logs
 
 # Get all remaining run_ids
@@ -24,22 +25,23 @@ for core_id in $(seq 0 $((NUM_CORES - 1))); do
         continue
     fi
 
-    script="jobs/job_${core_id}.sh"
+    script="jobs/job_${core_id}_2.sh"
     cat <<EOF > $script
 #!/bin/bash
-#SBATCH --job-name=abc_${core_id}
-#SBATCH --output=logs/abc_${core_id}.out
-#SBATCH --error=logs/abc_${core_id}.err
+#SBATCH --job-name=abc_${core_id}_2
+#SBATCH --output=logs/abc_${core_id}_2.out
+#SBATCH --error=logs/abc_${core_id}_2.err
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=05:00:00
-#SBATCH --mem=2G
+#SBATCH --time=01:00:00
+#SBATCH --mem=3G
 #SBATCH -p burst
 #SBATCH -A birthright
 
 source ~/abc_venv/bin/activate
 export PYTHONPATH=\$PYTHONPATH:\$(pwd)
+
 python run_one.py ${core_run_ids}
 EOF
 

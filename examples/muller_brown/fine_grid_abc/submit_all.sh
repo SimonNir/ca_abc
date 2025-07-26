@@ -3,7 +3,7 @@ mkdir -p jobs logs
 
 # Get all remaining run_ids
 remaining_ids=$(python -c "
-from sweep_v3 import get_all_run_params, get_completed_runs, RESULT_DIR
+from sweep import get_all_run_params, get_completed_runs, RESULT_DIR
 all_runs = get_all_run_params()
 completed = get_completed_runs(RESULT_DIR)
 remaining = [str(r[0]) for r in all_runs if r[0] not in completed]

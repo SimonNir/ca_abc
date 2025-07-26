@@ -2,9 +2,7 @@
 name = "ca_abc"
 version = "0.1.0"
 description = "Curvature-Adaptive Autonomous Basin Climbing"
-author = [
-    { name = "Simon Nirenberg", email = "simon_nirenberg@brown.edu" }
-]
+
 dependencies = [
     "numpy",
     "scipy",

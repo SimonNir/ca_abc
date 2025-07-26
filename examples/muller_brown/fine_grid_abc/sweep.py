@@ -14,14 +14,14 @@ ITERS = 10  # Number of iterations per parameter combination
 
 def get_all_run_params():
     # Covariance scales (as fractions of characteristic length scale ~0.55)
-    std_dev_scales = np.round(np.geomspace(1/2, 1/30, num=10), 4).tolist()
+    std_dev_scales = np.round(np.geomspace(1/2, 1/10, num=10), 6).tolist()
     
     # Height fractions (of characteristic barrier ~38.0)
-    bias_height_fractions = np.round(np.geomspace(1/3, 1/300, num=10), 6).tolist()
+    bias_height_fractions = np.round(np.geomspace(1/5, 1/50, num=10), 6).tolist()
     
     # Fixed parameters
     perturbations = [0.005]
-    optimizers = [0]  # Just FIRE optimizer
+    optimizers = [0, 1]
     iters = 10
     
     base_params = list(product(std_dev_scales, bias_height_fractions, 
@@ -70,18 +70,17 @@ def single_run(args):
             perturb_type="fixed",
             default_perturbation_size=perturb,
             scale_perturb_by_curvature=False,
-            curvature_perturbation_scale=0.0,
             max_perturbation_size=perturb * 5,
 
             bias_height_type="fixed",
             default_bias_height=bias_height,
             max_bias_height=bias_height * 3,
-            curvature_bias_height_scale=0.0,
 
             bias_covariance_type="fixed",
             default_bias_covariance=bias_cov,
             max_bias_covariance=bias_cov * 5,
-            curvature_bias_covariance_scale=0.0,
+            use_ema_adaptive_scaling=True,
+            conservative_ema_delta=False,
 
             max_descent_steps=1000,
             descent_convergence_threshold=1e-5,

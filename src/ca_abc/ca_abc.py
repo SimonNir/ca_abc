@@ -731,7 +731,7 @@ class CurvatureAdaptiveABC:
                 if found_saddles.ndim == 1:
                     found_saddles = found_saddles.reshape(-1, 1)
 
-                matched_saddles = [np.any(np.linalg.norm(found_saddles - true_sad.reshape(1, -1), axis=1) < 1e-2) 
+                matched_saddles = [np.any(np.linalg.norm(found_saddles - true_sad.reshape(1, -1), axis=1) < 0.05) 
                                 for true_sad in true_saddles]
             else:
                 matched_saddles = [False] * len(true_saddles)

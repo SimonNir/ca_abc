@@ -33,7 +33,7 @@ for core_id in $(seq 0 $((NUM_CORES - 1))); do
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=04:00:00
+#SBATCH --time=05:00:00
 #SBATCH --mem=2G
 #SBATCH -p burst
 #SBATCH -A birthright

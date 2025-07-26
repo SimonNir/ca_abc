@@ -12,33 +12,33 @@ def run_2d_simulation():
     
     abc = CurvatureAdaptiveABC(
         potential=StandardMullerBrown2D(),
-        starting_position=[0.0, 0.0],
-        curvature_method="bfgs",
+        starting_position=np.array([0.6234994049, 0.02803775853]),
+        curvature_method="none",
         dump_every=10000,
 
-        perturb_type="adaptive",
-        default_perturbation_size=0.001,
+        perturb_type="fixed",
+        default_perturbation_size=0.005,
         scale_perturb_by_curvature=True,
         max_perturbation_size=0.01,
      
-        bias_height_type="adaptive",
-        default_bias_height=1,
+        bias_height_type="fixed",
+        default_bias_height=.76,
         max_bias_height= 3,
 
-        bias_covariance_type="adaptive",
-        default_bias_covariance=0.001,
+        bias_covariance_type="fixed",
+        default_bias_covariance=0.003025,
         max_bias_covariance= 0.02,
         
         use_ema_adaptive_scaling=True,
         conservative_ema_delta=False, 
         
-        max_descent_steps=500,
-        descent_convergence_threshold=1e-6, 
+        max_descent_steps=1000,
+        descent_convergence_threshold=1e-5, 
         max_acceptable_force_mag=1e99,
     )
     
     opt = FIREOptimizer(abc)  
-    abc.run(max_iterations=5000, stopping_minima_number=1, optimizer=opt, verbose=True)
+    abc.run(max_iterations=10000, stopping_minima_number=3, optimizer=opt, verbose=True)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)

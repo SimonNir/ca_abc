@@ -88,7 +88,7 @@ def single_run(args):
         )
 
         optimizer = FIREOptimizer(abc) if opt == 0 else ScipyOptimizer(abc)
-        abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=optimizer)
+        abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=optimizer, verbose=False)
 
         run_data = {
             'run_id': run_id,

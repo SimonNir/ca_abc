@@ -1,7 +1,7 @@
 from ca_abc.ca_abc import CurvatureAdaptiveABC
-from potentials import *
+from ca_abc.potentials import *
 from src.ca_abc.optimizers import *
-from analysis import ABCAnalysis
+from ca_abc.analysis import ABCAnalysis
 import numpy as np
 from ase import Atoms
 

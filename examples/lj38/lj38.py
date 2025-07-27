@@ -1,12 +1,12 @@
 from ca_abc import CurvatureAdaptiveABC
-from potentials import *
-from optimizers import *
-from analysis import ABCAnalysis
+from ca_abc.potentials import *
+from ca_abc.optimizers import *
+from ca_abc.analysis import ABCAnalysis
 import numpy as np
 from ase import Atoms
 
 def main(): 
-    np.random.seed(4)
+    # np.random.seed(4)
 
     lj = CanonicalLennardJonesCluster(38)
 
@@ -37,7 +37,7 @@ def main():
     opt = ScipyOptimizer(abc, 'BFGS')
     # opt = FIREOptimizer(abc)
 
-    abc.run(max_iterations=1000, stopping_minima_number=1000, optimizer=opt, verbose=True, save_summary=True)
+    abc.run(max_iterations=1000, stopping_minima_number=100, optimizer=opt, verbose=True, save_summary=True)
 
     # analyzer = ABCAnalysis("abc_data")
     analyzer = ABCAnalysis(abc)

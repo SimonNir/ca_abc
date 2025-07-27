@@ -63,7 +63,7 @@ def single_run(args):
         abc = CurvatureAdaptiveABC(
             potential=StandardMullerBrown2D(),
             starting_position=np.array([0.6234994049, 0.02803775853]),
-            curvature_method="None",
+            curvature_method="bfgs",
             dump_every=30000,
             dump_folder=f"{RESULT_DIR}/run_{run_id}",
 

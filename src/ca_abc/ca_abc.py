@@ -386,7 +386,7 @@ class CurvatureAdaptiveABC:
                 if verbose:
                     print("EMA log variance:", self.log_running_variance_ema)
                     print("Target log variance:", log_target_var)
-                    print("Dynamic delta:", delta)
+                    print("Dynamic delta_cov:", delta)
             else:
                 var_along_modes =  clipped_h * self.curvature_bias_covariance_scale * eigvals
         else:
@@ -526,7 +526,7 @@ class CurvatureAdaptiveABC:
     def _check_minimum(self, converged, final_pos, verbose=True):
         """Check if the final position is a minimum."""
            
-        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.min_bias_height/50):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/50):
             
             def is_unique(pos, minima, threshold=1e-3):
                 if len(minima) == 0:

@@ -13,31 +13,40 @@ def main():
     # lj = Complex1D()
 
     abc = CurvatureAdaptiveABC(
-                lj, 
-                curvature_method="bfgs", 
-                bias_height_type="adaptive",
-                         
-                max_descent_steps=1000, 
-                dump_every=1000,
-                descent_convergence_threshold=1e-2, 
+        potential=lj,
+        curvature_method="bfgs",
+        dump_every=30000,
 
-                default_bias_height=0.03,
-                max_bias_height=0.15, 
+        perturb_type="fixed",
+        default_perturbation_size=0.1,
+        scale_perturb_by_curvature=False,
+        # min_perturbation_size=0.005/1.5,
+        # max_perturbation_size=0.005*1.5,
+     
+        bias_height_type="fixed",
+        default_bias_height=10,
+        # min_bias_height=.76/1.5,
+        # max_bias_height= 1.5*.76,
 
-                perturb_type="adaptive", 
-                bias_covariance_type="adaptive", 
-                default_bias_covariance=0.05,
-                max_bias_covariance=0.25, 
-                use_ema_adaptive_scaling=True,
-
-                default_perturbation_size=0.05,
-                scale_perturb_by_curvature=False,
-                )
+        bias_covariance_type="fixed",
+        # default_bias_covariance=0.003025,
+        default_bias_covariance=10,
+        # min_bias_covariance= 0.018087/1.5,
+        # max_bias_covariance= 1.5*0.018087,
+        
+        use_ema_adaptive_scaling=True,
+        conservative_ema_delta=False, 
+        struc_uniqueness_rmsd_threshold=1, 
+        
+        max_descent_steps=1000,
+        descent_convergence_threshold=1e-2, 
+        max_acceptable_force_mag=1e99,
+    )
 
     opt = ScipyOptimizer(abc, 'BFGS')
     # opt = FIREOptimizer(abc)
 
-    abc.run(max_iterations=1000, stopping_minima_number=100, optimizer=opt, verbose=True, save_summary=True)
+    abc.run(max_iterations=20, stopping_minima_number=100, optimizer=opt, verbose=True, save_summary=True)
 
     # analyzer = ABCAnalysis("abc_data")
     analyzer = ABCAnalysis(abc)

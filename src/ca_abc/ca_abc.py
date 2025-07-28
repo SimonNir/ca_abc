@@ -52,6 +52,9 @@ class CurvatureAdaptiveABC:
         use_ema_adaptive_scaling = True, 
         ema_alpha = 0.3, 
         conservative_ema_delta = False,
+
+        min_found_energy_diff_threshold = None, 
+        struc_uniqueness_rmsd_threshold = 1e-3,
         
         
         # Descent and optimization
@@ -114,6 +117,9 @@ class CurvatureAdaptiveABC:
         self.log_running_variance_ema = None
         self.log_running_height_ema = None
         self.log_running_perturb_ema = None
+
+        self.min_found_energy_diff_threshold = min_found_energy_diff_threshold if min_found_energy_diff_threshold is not None else self.min_bias_height/50
+        self.struc_uniqueness_rmsd_threshold = struc_uniqueness_rmsd_threshold
         
         self.descent_convergence_threshold = descent_convergence_threshold
         self.max_descent_steps = max_descent_steps
@@ -122,7 +128,8 @@ class CurvatureAdaptiveABC:
         self.optimizer = None
 
         if self.curvature_method not in ["bfgs", "finite_diff"] and "adaptive" in [self.bias_covariance_type, self.bias_height_type, self.perturb_type]:
-            raise RuntimeWarning("adaptive mode chosen for one or more parameters but no valid curvature method supplied")
+            print("Warning: adaptive mode chosen for one or more parameters, but no valid curvature method supplied. Setting to \'bfgs\' by default.")
+            self.curvature_method = "bfgs"
 
 
     def reset(self, starting_position=None, clean_dir=False):
@@ -525,8 +532,7 @@ class CurvatureAdaptiveABC:
 
     def _check_minimum(self, converged, final_pos, verbose=True):
         """Check if the final position is a minimum."""
-           
-        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.default_bias_height/50):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.min_found_energy_diff_threshold):
             
             def is_unique(pos, minima, threshold=1e-3):
                 if len(minima) == 0:
@@ -538,7 +544,7 @@ class CurvatureAdaptiveABC:
                 
                 return np.all(rmsds >= threshold)
             
-            if is_unique(final_pos, self.minima, threshold=1e-3):
+            if is_unique(final_pos, self.minima, threshold=self.struc_uniqueness_rmsd_threshold):
                 print(f"Identified minimum at {final_pos} with energy {self.unbiased_energies[-1]}")
                 if not converged and verbose:
                     print("Warning: minimum above was identified at a position where optimizer did not converge to desired tolerance")
@@ -645,8 +651,9 @@ class CurvatureAdaptiveABC:
                 if verbose:
                     print(f"Iteration {iteration+1}/{max_iterations}: "
                         f"Descent converged: {converged}, "
-                        f"Position:{self.position}, "
-                        f"Energy: {self.unbiased_energies[-1]}")
+                        # f"Position:{self.position}, "
+                        f"Unbiased Energy: {self.unbiased_energies[-1]}",
+                        f"Biased Energy: {self.biased_energies[-1]}")
                     print()
 
             print(f"Simulation completed.\n")

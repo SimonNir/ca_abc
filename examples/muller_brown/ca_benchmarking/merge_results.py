@@ -3,6 +3,8 @@ import pandas as pd
 import os
 import json
 import glob
+import ast 
+from sweep import get_run_params, get_all_run_params
 
 # --- Config ---
 RESULT_DIR = "abc_mb_results"
@@ -53,29 +55,45 @@ def convert_numpy(obj):
 def merge_results():
     print("Merging individual JSON files into final JSON...")
     all_results = []
-    for fname in glob.glob(os.path.join(RESULT_DIR, "run_*.json")):
+
+    files = glob.glob(os.path.join(RESULT_DIR, "run_*.json"))
+    print(f"Found {len(files)} result files.")
+
+    for fname in files:
         try:
             with open(fname) as f:
                 data = json.load(f)
+
+                # if "run_id" not in data:
+                #     print(f"Skipping {fname}: no run_id found.")
+                #     continue
+                # # Originally had this block because forgot to include in the original jsons at first
+                # try:
+                #     params = get_run_params(data["run_id"])
+                #     data["adaptive_height_scale"] = params[4]
+                #     data["adaptive_cov_scale"] = params[5]
+                # except Exception as e:
+                #     print(f"run_id = {data['run_id']}, param injection failed: {e}")
+                
                 all_results.append(data)
+
         except Exception as e:
             print(f"Failed to load {fname}: {e}")
 
+    if not all_results:
+        print("No successful results loaded.")
+        return
+
+    print(f"Loaded {len(all_results)} runs.")
+
     df_json = pd.DataFrame(all_results)
+    print(f"Resulting DataFrame shape: {df_json.shape}")
 
-    if PAST_CSV and os.path.isfile(PAST_CSV):
-        try:
-            df_past = pd.read_csv(PAST_CSV)
-            df_past = parse_complex_columns(df_past)
-            if 'run_id' in df_past.columns:
-                df_json = pd.concat([df_json, df_past], ignore_index=True)
-                print(f"Merged {len(df_past)} rows from previous CSV.")
-            else:
-                print(f"run_id column missing from {PAST_CSV}, skipping.")
-        except Exception as e:
-            print(f"Failed to merge past CSV: {e}")
+    # Optionally, check what's inside
+    print("Sample rows:")
+    print(df_json.head())
 
-    # Convert numpy-like objects to Python-native JSON-safe types
+    # Final serialization
     dicts = df_json.to_dict(orient="records")
     dicts = [convert_numpy(d) for d in dicts]
 
@@ -84,6 +102,7 @@ def merge_results():
 
     print(f"Final merged results written to: {FINAL_JSON}")
     print(f"Total successful runs: {len(dicts)}")
+
 
 
 if __name__ == "__main__":

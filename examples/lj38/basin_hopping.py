@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import basinhopping, linear_sum_assignment
-from potentials import CanonicalLennardJonesCluster
+from ca_abc.potentials import CanonicalLennardJonesCluster
 from ase import Atoms
 from ase.calculators.lj import LennardJones
 

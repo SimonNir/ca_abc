@@ -30,6 +30,13 @@ def get_all_run_params():
     # Assign unique run_ids
     return [(i, *params) for i, params in enumerate(base_params * iters)]
 
+def get_run_params(run_id):
+    all_params = get_all_run_params()
+    try:
+        return all_params[run_id][1:]  # Exclude run_id from the returned tuple
+    except IndexError:
+        raise ValueError(f"Invalid run_id: {run_id}. Must be between 0 and {len(all_params) - 1}.")
+
 def convert_numpy(obj):
     """Convert NumPy objects to native Python types for JSON serialization."""
     if isinstance(obj, (np.ndarray, np.integer, np.int64, np.floating, np.float64)):
@@ -103,6 +110,8 @@ def single_run(args):
             'bias_count': len(abc.bias_list),
             'energy_calls_at_each_min': abc.energy_calls_at_each_min or [],
             'force_calls_at_each_min': abc.force_calls_at_each_min or [],
+            'adaptive_height_scale':adaptive_height_scale,
+            'adaptive_cov_scale':adaptive_cov_scale,
         }
 
         with open(os.path.join(RESULT_DIR, f"run_{run_id}.json"), "w") as f:

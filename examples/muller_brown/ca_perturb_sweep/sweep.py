@@ -19,7 +19,7 @@ def get_all_run_params():
     param_cols = [
         'bias_std_dev_scale',
         'bias_height_fraction',
-        'perturbation',
+        'perturbation_size',
         'optimizer',
     ]
 

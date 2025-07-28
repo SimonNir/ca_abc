@@ -1,0 +1,28 @@
+Starting run 85
+Identified minimum at [0.6234994  0.02803776] with energy -108.16672411685238
+Identified minimum at [-0.05001704  0.46669586] with energy -80.7678181244403
+Identified minimum at [-0.55822362  1.44172586] with energy -146.69951720995394
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001704  0.46669586], Energy = -80.7678181244403
+Minimum 3: Position = [-0.55822362  1.44172586], Energy = -146.69951720995394
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.24450609 0.32992398], Energy = -71.76757960674797
+Saddle 2: Position = [-0.83310286  0.6173881 ], Energy = -40.63263385949128
+
+Computational statistics:
+	Total energy calls: 11465
+	Energy calls at each min: [1, 3049, 11465]
+	Total force calls: 11465
+	Force calls at each min: [1, 3049, 11465]
+	Total steps: 12040
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 2/2

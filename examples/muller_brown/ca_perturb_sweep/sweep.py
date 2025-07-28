@@ -102,7 +102,7 @@ def single_run(args):
             max_acceptable_force_mag=1e99,
         )
 
-        optimizer = FIREOptimizer(abc) if opt == 0 else ScipyOptimizer(abc)
+        optimizer = FIREOptimizer(abc) if opt == 0  or opt=="FIRE" else ScipyOptimizer(abc)
         abc.run(max_iterations=5000, stopping_minima_number=3, optimizer=optimizer, verbose=False)
 
         run_data = {
@@ -110,7 +110,7 @@ def single_run(args):
             'bias_std_dev_scale': std_scale,
             'bias_height_fraction': height_frac,
             'perturbation_size': perturb,
-            'optimizer': 'FIRE' if opt == 0 else 'Scipy',
+            'optimizer': 'FIRE' if opt == 0 or opt=="FIRE" else 'Scipy',
             'found_minima': abc.minima,
             'found_saddles': abc.saddles,
             'bias_count': len(abc.bias_list),

@@ -169,7 +169,7 @@ Contributions are welcome\! Please open an issue or pull request on GitHub.
 
 ## Known Issues
 
-  * BFGS Hessian approximation degrades in extremely high dimensions (\>100D); Lanczos or Rayleigh methods likely become preferable 
+  * BFGS Hessian approximation degrades in extremely high dimensions (\>300D); Lanczos or Rayleigh methods (to be incorporated in future work) likely become preferable
   * ASE interface may require configuration for some calculators
 
 -----

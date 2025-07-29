@@ -1,0 +1,2 @@
+/var/spool/slurmd.spool/job1057575/slurm_script: line 16: 508094 Killed                  python run_one.py 1711 1994 797 1884 1348 1830 459 281 1721 562 1154 1188 2073 998 2077 1330 2554 1929 1378 2282 1454 1838 2101 166 2499 1975
+slurmstepd: error: Detected 1 oom_kill event in StepId=1057575.batch. Some of the step tasks have been OOM Killed.

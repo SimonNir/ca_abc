@@ -139,13 +139,17 @@ def run_al_benchmark():
     )
     
     # Run the simulation
-    optimizer = ASEOptimizer(abc, 'FIRE')
+    optimizer = ASEOptimizer(abc, 'BFGS')
     abc.run(
         optimizer=optimizer,
-        max_iterations=100,
+        max_iterations=300,
         verbose=True,
-        stopping_minima_number=5  # Stop after finding 5 distinct minima
+        stopping_minima_number=2  # Stop after finding 5 distinct minima
     )
+
+    from ca_abc.analysis import ABCAnalysis
+    analyzer = ABCAnalysis(abc)
+    analyzer.plot_diagnostics()
     
     return abc, al_system
 
@@ -167,7 +171,7 @@ if __name__ == "__main__":
     print(f"Saved {len(minima_structures)} visited minima to 'al_surface_minima.xyz'")
 
     structures = []
-    for x in abc.minima:
+    for x in abc.trajectory:
         atoms = template.copy()
         atoms.set_positions(x.reshape(-1, 3))
         structures.append(atoms)

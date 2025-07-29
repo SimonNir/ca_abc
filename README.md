@@ -1,7 +1,7 @@
 # Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)
 
-A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of rugged potential energy surfaces (PES) without requiring predefined collective variables.
-This is also the only known Pythonic Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use!
+A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of pathways along rugged potential energy surfaces (PES) without CVs or endpoint information.
+This is also the only known Python Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use for any chemistry, physics, or materials simulations your heart desires!
 
 ## Key Features
 
@@ -163,7 +163,7 @@ Full API documentation is available in the code docstrings. Key classes:
 
 ## Contributing
 
-Contributions are welcome\! Please open an issue or pull request on GitHub.
+Contributions are welcome\! Please open an issue or pull request on GitHub. Feel free to refer to the Known Issues and Future Directions section below for details. 
 
 -----
 
@@ -171,8 +171,19 @@ Contributions are welcome\! Please open an issue or pull request on GitHub.
 
   * BFGS Hessian approximation degrades in extremely high dimensions (\>300D); Lanczos or Rayleigh methods (to be incorporated in future work) likely become preferable
   * ASE interface may require configuration for some calculators
+  * dynamic deltas >> 1 often perform far better than when restricted to the expected (0,1] domain; this might be due to the imperfection of the BFGS hessian or anhamonicity of the landscapes
 
 -----
+
+## Future Directions
+
+  * Incorporate euclidean cutoff for bias summation to prevent spurious enumeration through the whole list (insignificant below 10,000 biases)
+  * Include Lanczos Hessian estimation for very high (\>300) dimensional spaces, where the BFGS approximation may be imperfect
+  * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
+  * Improve height metric with descent and past barrier information
+  * (Machine) Learn bias covariance from descent information, allowing adaptiveness and flattening in anharmonic regions
+  * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
+  * Set up LAMMPS calculator (very easy in theory via ASE support)
 
 ## Support
 

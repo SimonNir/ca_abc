@@ -52,7 +52,7 @@ def single_run(args):
     try:
         from ca_abc.potentials import CanonicalLennardJonesCluster, cartesian_to_internal, internal_to_cartesian, align_to_canonical
         from ase import io
-        g = io.read("/mnt/c/Users/simon/OneDrive - Brown University/Summer 1/ORISE/ca_abc/examples/lj38/wales_global_min.xyz")
+        g = io.read("/home/nirenbergsd/ca_abc/examples/lj38/wales_global_min.xyz")
         pos = cartesian_to_internal(align_to_canonical(g.positions.copy()))
         abc = CurvatureAdaptiveABC(
             potential=CanonicalLennardJonesCluster(38),

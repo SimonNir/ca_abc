@@ -20,8 +20,8 @@ def get_all_run_params():
     perturbations = [0.005]
     optimizers = [0]
 
-    adaptive_height_scales = np.linspace(1,5,9).to_list()
-    adaptive_cov_scales = np.linspace(1,5,9).to_list()
+    adaptive_height_scales = np.linspace(1,5,9).tolist()
+    adaptive_cov_scales = np.linspace(1,5,9).tolist()
     pert_type = [0, 1]
     iters = 10
     

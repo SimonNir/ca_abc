@@ -1,0 +1,282 @@
+Starting run 1252
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05002474  0.46669687] with unbiased energy -80.76781810669479
+Identified minimum at position [-0.55822365  1.44172583] with unbiased energy -146.69951720995397
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05002474  0.46669687], Energy = -80.76781810669479
+Minimum 3: Position = [-0.55822365  1.44172583], Energy = -146.69951720995397
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.333049   0.31735402], Energy = -69.16605543211436
+Saddle 2: Position = [-0.73411066  0.40971747], Energy = -38.17956363656843
+
+Computational statistics:
+	Total energy calls: 2032
+	Energy calls at each min: [1, 1238, 2032]
+	Total force calls: 2032
+	Force calls at each min: [1, 1238, 2032]
+	Total steps: 2139
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 1355
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05083384  0.46692629] with unbiased energy -80.76772655805013
+Identified minimum at position [-0.55822365  1.44172583] with unbiased energy -146.69951720995397
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05083384  0.46692629], Energy = -80.76772655805013
+Minimum 3: Position = [-0.55822365  1.44172583], Energy = -146.69951720995397
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.31730731 0.32748478], Energy = -69.32100381583356
+Saddle 2: Position = [-0.86769642  0.61410729], Energy = -40.61554433745994
+
+Computational statistics:
+	Total energy calls: 5155
+	Energy calls at each min: [1, 1232, 5155]
+	Total force calls: 5155
+	Force calls at each min: [1, 1232, 5155]
+	Total steps: 5430
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+Starting run 934
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05013089  0.46671789] with unbiased energy -80.76781642257872
+Identified minimum at position [-0.55822365  1.44172583] with unbiased energy -146.69951720995388
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05013089  0.46671789], Energy = -80.76781642257872
+Minimum 3: Position = [-0.55822365  1.44172583], Energy = -146.69951720995388
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.29092502 0.35824138], Energy = -69.58966127728928
+Saddle 2: Position = [0.32893754 0.77409668], Energy = 2.0402994339835985
+
+Computational statistics:
+	Total energy calls: 6208
+	Energy calls at each min: [1, 439, 6208]
+	Total force calls: 6208
+	Force calls at each min: [1, 439, 6208]
+	Total steps: 6492
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 503
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05129065  0.46703858] with unbiased energy -80.76760198984897
+Approximate Hessian has condition number >1e6 and cannot be reliably trusted; reverting to default behavior. 
+Eigenvalues: [2.17375159e-03 2.60047319e+08]
+Identified minimum at position [-0.55822074  1.4417299 ] with unbiased energy -146.6995172036196
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05129065  0.46703858], Energy = -80.76760198984897
+Minimum 3: Position = [-0.55822074  1.4417299 ], Energy = -146.6995172036196
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.20624999 0.29705747], Energy = -72.262136300474
+Saddle 2: Position = [-0.03730823 -0.06127387], Energy = -35.757033339474006
+
+Computational statistics:
+	Total energy calls: 14221
+	Energy calls at each min: [1, 1973, 14221]
+	Total force calls: 14221
+	Force calls at each min: [1, 1973, 14221]
+	Total steps: 14926
+
+Verification against reference:
+True minima found: 2/3
+Missed minima at positions:
+[-0.05001082  0.4666941 ]
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[-0.82200156  0.6243128 ]
+Starting run 783
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05001384  0.46669472] with unbiased energy -80.76781812857274
+Identified minimum at position [-0.55822365  1.44172582] with unbiased energy -146.69951720995385
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05001384  0.46669472], Energy = -80.76781812857274
+Minimum 3: Position = [-0.55822365  1.44172582], Energy = -146.69951720995385
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.70782329 0.23124641], Energy = -57.509660963749496
+Saddle 2: Position = [-0.76501287  0.36603106], Energy = -30.66823194390596
+
+Computational statistics:
+	Total energy calls: 3847
+	Energy calls at each min: [1, 1314, 3847]
+	Total force calls: 3847
+	Force calls at each min: [1, 1314, 3847]
+	Total steps: 4055
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 697
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05011896  0.46671646] with unbiased energy -80.76781673037999
+Identified minimum at position [-0.55822362  1.44172586] with unbiased energy -146.69951720995388
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05011896  0.46671646], Energy = -80.76781673037999
+Minimum 3: Position = [-0.55822362  1.44172586], Energy = -146.69951720995388
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.16420489 0.27444693], Energy = -71.62337197674438
+Saddle 2: Position = [-0.36801186  0.10858178], Energy = -21.5516942714825
+
+Computational statistics:
+	Total energy calls: 11322
+	Energy calls at each min: [1, 1691, 11322]
+	Total force calls: 11322
+	Force calls at each min: [1, 1691, 11322]
+	Total steps: 11915
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 254
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05010616  0.46671275] with unbiased energy -80.76781705657429
+Identified minimum at position [-0.55822363  1.44172585] with unbiased energy -146.69951720995397
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05010616  0.46671275], Energy = -80.76781705657429
+Minimum 3: Position = [-0.55822363  1.44172585], Energy = -146.69951720995397
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.06770981 0.11414414], Energy = -63.359963204564544
+Saddle 2: Position = [ 0.14674576 -0.21019151], Energy = -17.05997928360678
+
+Computational statistics:
+	Total energy calls: 8546
+	Energy calls at each min: [1, 864, 8546]
+	Total force calls: 8546
+	Force calls at each min: [1, 864, 8546]
+	Total steps: 9013
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 465
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05013067  0.4667241 ] with unbiased energy -80.76781629710686
+Approximate Hessian has condition number >1e6 and cannot be reliably trusted; reverting to default behavior. 
+Eigenvalues: [6.78318116e-04 1.16073749e+06]
+Identified minimum at position [-0.55822366  1.44172582] with unbiased energy -146.69951720995385
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05013067  0.4667241 ], Energy = -80.76781629710686
+Minimum 3: Position = [-0.55822366  1.44172582], Energy = -146.69951720995385
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.67644711 0.22844454], Energy = -62.267082132070286
+Saddle 2: Position = [ 0.46386696 -0.22091429], Energy = -27.23175302063254
+
+Computational statistics:
+	Total energy calls: 5729
+	Energy calls at each min: [1, 1469, 5729]
+	Total force calls: 5729
+	Force calls at each min: [1, 1469, 5729]
+	Total steps: 6033
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 0/2
+Missed saddles at positions:
+[0.21248658 0.29298833]
+[-0.82200156  0.6243128 ]
+Starting run 1508
+Identified minimum at position [0.6234994  0.02803776] with unbiased energy -108.16672411685238
+Identified minimum at position [-0.05015821  0.46672593] with unbiased energy -80.76781549888541
+Identified minimum at position [-0.55822303  1.44172665] with unbiased energy -146.69951720970548
+Simulation completed.
+
+
+Energies of found minima:
+Minimum 1: Position = [0.6234994  0.02803776], Energy = -108.16672411685238
+Minimum 2: Position = [-0.05015821  0.46672593], Energy = -80.76781549888541
+Minimum 3: Position = [-0.55822303  1.44172665], Energy = -146.69951720970548
+
+Approximate saddle points between minima:
+Saddle 1: Position = [0.20385236 0.28290645], Energy = -72.21654601050255
+Saddle 2: Position = [-0.84375701  0.47546108], Energy = -35.99254123880938
+
+Computational statistics:
+	Total energy calls: 4537
+	Energy calls at each min: [1, 1455, 4537]
+	Total force calls: 4537
+	Force calls at each min: [1, 1455, 4537]
+	Total steps: 4772
+
+Verification against reference:
+True minima found: 3/3
+
+Verification against reference (saddles):
+True saddles found: 1/2
+Missed saddles at positions:
+[-0.82200156  0.6243128 ]

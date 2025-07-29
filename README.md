@@ -1,6 +1,7 @@
 # Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)
 
 A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of rugged potential energy surfaces (PES) without requiring predefined collective variables.
+This is also the only known Pythonic Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use!
 
 ## Key Features
 

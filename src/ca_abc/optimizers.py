@@ -208,7 +208,8 @@ class ScipyOptimizer(Optimizer):
         raise AttributeError(f"Inverse Hessian not available for method '{self.method}'")
 
 from ca_abc.potentials import ASEPotentialEnergySurface
-from ase.optimize import BFGS, LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
+from ase.optimize import BFGS as aBFGS
+from ase.optimize import LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
 
 class ASEOptimizer(Optimizer):
     def __init__(self, abc_sim, optimizer_class='BFGS', **ase_optimizer_kwargs):
@@ -246,7 +247,7 @@ class ASEOptimizer(Optimizer):
         self._register_accepted_step(x0)
 
         optimizer_mapping = {
-            'BFGS': BFGS,
+            'BFGS': aBFGS,
             'LBFGS': LBFGS,
             'GPMin': GPMin,
             'FIRE': FIRE,
@@ -254,7 +255,7 @@ class ASEOptimizer(Optimizer):
             'BFGSLineSearch': BFGSLineSearch,
         }
         
-        OptimizerClass = optimizer_mapping.get(self.optimizer_class, BFGS)
+        OptimizerClass = optimizer_mapping.get(self.optimizer_class, aBFGS)
         optimizer_kwargs = self.ase_optimizer_kwargs.copy()
 
             

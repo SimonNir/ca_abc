@@ -333,17 +333,48 @@ from ase import Atoms
 from ase.calculators.lj import LennardJones
 
 # === Softplus and Derivatives ===
+import numpy as np
+from scipy.special import expit  # Stable sigmoid
+
 def softplus(x, k=10):
-    return np.where(x > 50/k, x, np.log1p(np.exp(k * x)) / k)
+    """Numerically stable softplus."""
+    xk = k * x
+    return np.where(
+        xk > 50,
+        x,
+        (np.log1p(np.exp(-np.abs(xk))) + np.maximum(xk, 0)) / k
+    )
 
 def d_softplus_dx(x, k=10):
-    return 1 / (1 + np.exp(-k * x))
+    """Derivative of softplus, i.e., sigmoid."""
+    return expit(k * x)
 
 def inverse_softplus(y, k=10):
-    return np.where(y > 50/k, y, np.log(np.exp(k * y) - 1) / k)
+    """Numerically stable inverse of softplus."""
+    y = np.clip(y, 1e-12, None)  # Prevent log of zero/negative
+    ky = k * y
+    # For very small ky, expm1(ky) ≈ ky, and log(ky) is a good approximation
+    small = ky < 1e-5
+    log_term = np.where(
+        small,
+        np.log(ky),  # log(ky) is approx log(expm1(ky)) for small ky
+        np.log(np.expm1(ky))
+    )
+    return np.where(ky > 50, y, log_term / k)
+
 
 # === Coordinate Transforms ===
-def internal_to_cartesian(x_internal, N, k=10):
+def internal_to_cartesian(x_internal, N=None, k=10):
+    
+    if N is None:
+        if len(x_internal) == 1:
+            N = 2
+        elif len(x_internal) == 3:
+            N = 3
+        else:
+            # Each additional atom beyond 3 contributes 3 internal coordinates
+            N = 3 + (len(x_internal) - 3) // 3
+    
     pos = np.zeros((N, 3))
 
     if N == 2:
@@ -589,7 +620,7 @@ class CanonicalASEPES(PotentialEnergySurface):
 
 # === Lennard-Jones Cluster in Canonical Frame ===
 class CanonicalLennardJonesCluster(CanonicalASEPES):
-    def __init__(self, num_atoms, sigma=1.0, epsilon=1.0, rc=30.0, k_soft=10):
+    def __init__(self, num_atoms, sigma=1.0, epsilon=1.0, rc=6.5, k_soft=10):
         self.num_atoms = num_atoms
         self.sigma = sigma
         self.epsilon = epsilon
@@ -599,7 +630,6 @@ class CanonicalLennardJonesCluster(CanonicalASEPES):
         atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=rc, smooth=True)
 
         super().__init__(atoms, k_soft=k_soft)
-        self.initial_coords = self.default_starting_position()
 
     def default_starting_position(self):
         N = self.num_atoms

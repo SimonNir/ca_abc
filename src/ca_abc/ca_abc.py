@@ -53,7 +53,7 @@ class CurvatureAdaptiveABC:
         ema_alpha = 0.3, 
         conservative_ema_delta = False,
 
-        min_found_energy_diff_threshold = None, 
+        energy_diff_threshold = None, # energy difference threshold at which significance is considered (e.g. if diff < threshold after relaxation, considered new minimum)
         struc_uniqueness_rmsd_threshold = 1e-3,
         
         
@@ -118,7 +118,7 @@ class CurvatureAdaptiveABC:
         self.log_running_height_ema = None
         self.log_running_perturb_ema = None
 
-        self.min_found_energy_diff_threshold = min_found_energy_diff_threshold if min_found_energy_diff_threshold is not None else self.min_bias_height/50
+        self.energy_diff_threshold = energy_diff_threshold if energy_diff_threshold is not None else self.min_bias_height/50
         self.struc_uniqueness_rmsd_threshold = struc_uniqueness_rmsd_threshold
         
         self.descent_convergence_threshold = descent_convergence_threshold
@@ -147,7 +147,9 @@ class CurvatureAdaptiveABC:
         self.unbiased_forces = []
 
         self.minima = []
+        self.min_indices = []
         self.saddles = []
+        self.saddle_indices = []
 
         self.dimension = len(self.position)
         self.most_recent_hessian = None 
@@ -532,7 +534,7 @@ class CurvatureAdaptiveABC:
 
     def _check_minimum(self, converged, final_pos, verbose=True):
         """Check if the final position is a minimum."""
-        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.min_found_energy_diff_threshold):
+        if np.isclose(self.unbiased_energies[-1], self.biased_energies[-1], atol=self.energy_diff_threshold):
             
             def is_unique(pos, minima, threshold=1e-3):
                 if len(minima) == 0:
@@ -544,14 +546,50 @@ class CurvatureAdaptiveABC:
                 
                 return np.all(rmsds >= threshold)
             
+
+            
             if is_unique(final_pos, self.minima, threshold=self.struc_uniqueness_rmsd_threshold):
-                print(f"Identified minimum at {final_pos} with energy {self.unbiased_energies[-1]}")
+                print(f"Identified minimum at position {final_pos} with unbiased energy {self.unbiased_energies[-1]}")
                 if not converged and verbose:
                     print("Warning: minimum above was identified at a position where optimizer did not converge to desired tolerance")
+
+                # Always append the new minimum
                 self.minima.append(final_pos.copy())
+                min_ind = len(self.trajectory) - 1
+                self.min_indices.append(min_ind)
+                # Append metadata for the (still valid) new minimum
                 self.energy_calls_at_each_min.append(self.potential.energy_calls)
                 self.force_calls_at_each_min.append(self.potential.force_calls)
-                
+
+                # Only do saddle logic if we now have at least 2 minima
+                if len(self.min_indices) >= 2:
+                    # Compute saddle index between last two minima
+                    prev_min_ind = self.min_indices[-2]
+                    curr_min_ind = self.min_indices[-1]
+                    start = prev_min_ind
+                    end = curr_min_ind + 1  # include current minimum
+
+                    saddle_ind = start + np.argmax(self.biased_energies[start:end])
+                    self.saddle_indices.append(saddle_ind)
+                    self.saddles.append(self.trajectory[saddle_ind])
+
+                    # Now validate the *previous* minimum
+                    prev_min_energy = self.unbiased_energies[prev_min_ind]
+                    saddle_energy = self.unbiased_energies[saddle_ind]
+
+                    # if saddle_energy - prev_min_energy < self.min_bias_height:
+                    #     print(f"Removing previous minimum at index {prev_min_ind} (energy {prev_min_energy}) because",
+                    #           f"\ncorresponding saddle does not have sufficiently greater energy ({saddle_energy})")
+
+                    #     # Remove the previous minimum and the newly added saddle
+                    #     self.minima.pop(-2)
+                    #     self.min_indices.pop(-2)
+                    #     self.saddle_indices.pop()
+                    #     self.saddles.pop()
+
+                    #     # Optionally remove corresponding metadata if tracked
+                    #     self.energy_calls_at_each_min.pop(-2)
+                    #     self.force_calls_at_each_min.pop(-2)                
     
     def compute_exact_extreme_hessian_mode(self, hessian, desired_mode = "softest"):
         """
@@ -618,7 +656,7 @@ class CurvatureAdaptiveABC:
         self.position += scale * direction
 
     
-    def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, summary_file=None, stopping_minima_number=None):
+    def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, summary_file=None, stopping_minima_number=None, ignore_max_steps_on_initial_minimization=True):
         """
         Run the ABC simulation.
         
@@ -634,8 +672,11 @@ class CurvatureAdaptiveABC:
 
         try:         
             for iteration in range(self.current_iteration, max_iterations):
-
-                converged = self.descend()
+                
+                if ignore_max_steps_on_initial_minimization and iteration == 0: 
+                    converged = self.descend(max_steps=self.max_descent_steps*100)
+                else: 
+                    converged = self.descend()
 
                 pos = self.position.copy()
 
@@ -683,29 +724,17 @@ class CurvatureAdaptiveABC:
 
         # 3. Approximate saddle points between minima
         if len(self.minima) > 1:
-            minima_indices = sorted([
-                np.argmin(np.linalg.norm(np.array(self.trajectory) - np.array(min_pos), axis=1))
-                for min_pos in self.minima
-            ])
+            minima_indices = self.min_indices
 
             saddle_info = []
             for i in range(len(minima_indices) - 1):
-                start, end = minima_indices[i], minima_indices[i + 1]
-                segment = slice(start, end + 1)
-                max_idx = np.argmax(self.unbiased_energies[segment])
-
-                saddle_info.append((
-                    self.trajectory[start + max_idx],
-                    self.unbiased_energies[start + max_idx]
+                saddle_info.append((self.saddles[i],
+                    self.unbiased_energies[self.saddle_indices[i]]
                 ))
 
             output.append("\nApproximate saddle points between minima:")
             for i, (pos, energy) in enumerate(saddle_info):
                 output.append(f"Saddle {i+1}: Position = {pos}, Energy = {energy}")
-                if self.length_at_last_summary < len(self.trajectory):
-                    self.saddles.append(pos)
-            
-        self.length_at_last_summary = len(self.trajectory)
 
         # 4. Computational statistics
         output.append("\nComputational statistics:")

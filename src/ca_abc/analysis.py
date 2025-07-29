@@ -366,6 +366,12 @@ class ABCAnalysis:
                     if step < len(energies):
                         ax1.scatter(step, energies[step], c='purple', s=50, marker='*', 
                                 label='Saddles' if i == 0 else None, zorder=5)
+                
+                if minima_indices and saddle_indices:
+                    min_energy = np.min(energies)
+                    max_energy_after_first_min = np.max(biased_energies[minima_indices[0]:])
+                    diff = max_energy_after_first_min - min_energy
+                    ax1.set_ylim(min_energy - 0.05*diff, max_energy_after_first_min+0.05*diff)
                         
             except Exception as e:
                 print(f"Error calculating barriers: {str(e)}")

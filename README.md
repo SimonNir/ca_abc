@@ -139,9 +139,9 @@ abc.run(max_iterations=200, stopping_minima_number=5)
 
 ## Citation
 
-If you use CA-ABC in your research, we kindly ask you to cite:
+If you use **CA-ABC** in your research, we kindly ask that you cite the following work:
 
-Nirenberg, S., Ding, L., & Do, C. (2023). Curvature-Adaptive Autonomous Basin Climbing: Efficient Exploration of Rugged Energy Landscapes Without Collective Variables. \[Journal Name]
+Nirenberg, S., Ding, L., & Do, C. (2023). *Curvature-Adaptive Autonomous Basin Climbing: Robust On-The-Fly Pathway Sampling for Rugged Energy Landscapes*. *[Journal Name]*.
 
 -----
 

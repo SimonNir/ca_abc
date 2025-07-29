@@ -19,25 +19,35 @@ class GaussianBias:
     def __init__(self, center, covariance, height):
         self.center = np.atleast_1d(center)
         self.height = height
-        # print(covariance)
         
-        # Handle scalar covariance input
         if np.isscalar(covariance):
             self.covariance = np.eye(len(center)) * covariance
         else:
             self.covariance = np.atleast_2d(covariance)
         
-        # Validate covariance matrix
         if self.covariance.shape[0] != self.covariance.shape[1]:
             raise ValueError(f"Covariance matrix must be square. Currently:\n{self.covariance}")
         if self.covariance.shape[0] != self.center.shape[0]:
             raise ValueError("Covariance matrix dimension must match center dimension")
         
-        # Compute inverse and determinant for efficient evaluation
-        self._cov_inv = np.linalg.inv(self.covariance)
-        self._det_cov = np.linalg.det(self.covariance)
-        if self._det_cov <= 0:
+        # Check positive definiteness by Cholesky (raises if not PD)
+        try:
+            self._cholesky = np.linalg.cholesky(self.covariance)
+        except np.linalg.LinAlgError:
             raise ValueError("Covariance matrix must be positive definite")
+        
+        # Compute inverse
+        self._cov_inv = np.linalg.inv(self.covariance)
+        
+        # Compute determinant from Cholesky factor: det = (prod(diag(L)))^2
+        diag_L = np.diag(self._cholesky)
+        log_det = 2.0 * np.sum(np.log(diag_L))
+        self._det_cov = np.clip(np.exp(log_det), 1e-100, 1e100)  # will be 0 if underflow, but no exception raised here
+
+        if not np.isfinite(log_det) or log_det == -np.inf:
+            raise ValueError("Covariance matrix determinant log is invalid, matrix may be singular or ill-conditioned")
+
+
     
     def potential(self, position):
         """
@@ -91,7 +101,7 @@ class GaussianBias:
     
     def get_cholesky(self):
         """Return the Cholesky decomposition of covariance matrix."""
-        return np.linalg.cholesky(self.covariance)
+        return self._cholesky
     
     def __repr__(self):
         return (f"GaussianBias(center={self.center}, covariance=\n{self.covariance}, height={self.height})")

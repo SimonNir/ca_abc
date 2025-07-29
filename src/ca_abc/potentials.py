@@ -393,10 +393,7 @@ def internal_to_cartesian(x_internal, N=None, k=10):
     pos[2, 0] = x_internal[1]
     pos[2, 1] = softplus(x_internal[2], k)
 
-    rest = x_internal[3:].reshape(-1, 3)
-    pos[3:, :2] = rest[:, :2]
-    pos[3:, 2] = softplus(rest[:, 2], k)
-
+    pos[3:] = x_internal[3:].reshape(-1, 3)
     return pos
 
 def cartesian_to_internal(pos, k=10):
@@ -423,7 +420,7 @@ def cartesian_to_internal(pos, k=10):
     x_internal[3:] = np.column_stack([
         rest[:, 0],
         rest[:, 1],
-        inverse_softplus(rest[:, 2], k)
+        rest[:, 2], 
     ]).reshape(-1)
 
     return x_internal
@@ -438,69 +435,95 @@ def uniform_sphere_points(n):
     z = np.cos(phi)
     return np.vstack((x, y, z)).T
 
-def align_to_canonical(positions):
-    positions = positions - positions[0]  # Move atom 0 to origin
 
-    N = len(positions)
-    if N < 2:
-        # Nothing to do if only one atom
-        return positions.copy()
-
-    # --- Step 1: Rotate so atom 1 lies on x-axis ---
-    v1 = positions[1]
-    e1 = v1 / np.linalg.norm(v1)
-
-    def rotation_matrix_from_vectors(vec1, vec2):
-        a = vec1 / np.linalg.norm(vec1)
-        b = vec2 / np.linalg.norm(vec2)
-        v = np.cross(a, b)
-        c = np.dot(a, b)
-        if np.isclose(c, -1.0):
-            # 180 deg rotation around arbitrary orthogonal axis
-            orth = np.array([1, 0, 0])
-            if np.allclose(a, orth):
-                orth = np.array([0, 1, 0])
-            v = np.cross(a, orth)
-            v /= np.linalg.norm(v)
-            return -np.eye(3) + 2 * np.outer(v, v)
-        elif np.isclose(c, 1.0):
-            return np.eye(3)
-        s = np.linalg.norm(v)
-        K = np.array([
-            [0, -v[2], v[1]],
-            [v[2], 0, -v[0]],
-            [-v[1], v[0], 0]
-        ])
-        return np.eye(3) + K + K @ K * ((1 - c) / (s ** 2))
-
-    R1 = rotation_matrix_from_vectors(e1, np.array([1, 0, 0]))
-    positions = positions @ R1.T
-
-    # --- Step 2: If at least 3 atoms, rotate atom 2 into xy-plane ---
-    if N > 2:
-        v2 = positions[2]
-        v2_proj = np.array([v2[0], v2[1], 0])
-        norm_proj = np.linalg.norm(v2_proj)
-        if norm_proj < 1e-8:
-            # Handle near-zero projection
-            v2_proj = np.array([0, 1e-6, 0])
-            norm_proj = 1e-6
-        v2_proj /= norm_proj
-        angle = np.arctan2(v2[2], np.dot(v2, v2_proj))
-        Rx = np.array([
-            [1, 0, 0],
-            [0, np.cos(-angle), -np.sin(-angle)],
-            [0, np.sin(-angle),  np.cos(-angle)]
-        ])
-        positions = positions @ Rx.T
-
-        # --- Step 3: Reflections for canonical orientation ---
-        if positions[2, 1] < 0:
-            positions[:, 1] = -positions[:, 1]
-        if N > 3 and positions[3, 2] < 0:
-            positions[:, 2] = -positions[:, 2]
-
-    return positions    
+def align_to_canonical(points):
+    """
+    Perform canonical alignment of points in 3D space with all coordinates >= 0.
+    
+    Args:
+        points: Nx3 numpy array of 3D points
+        
+    Returns:
+        aligned_points: Canonically aligned points with all coordinates >= 0
+        rotation_matrix: The combined rotation matrix used
+    """
+    if len(points) < 1:
+        return points, np.eye(3)
+    
+    # Make a copy to avoid modifying original
+    points = np.array(points, dtype=float)
+    aligned_points = points.copy()
+    
+    # Initialize combined rotation matrix
+    rotation_matrix = np.eye(3)
+    
+    # Step 1: Translate so first point is at origin
+    translation = aligned_points[0].copy()
+    aligned_points -= translation
+    
+    if len(points) >= 2:
+        # Step 2: Rotate so second point is along positive x-axis
+        v1 = aligned_points[1]
+        if not np.allclose(v1, 0):
+            # Normalize
+            v1_norm = v1 / np.linalg.norm(v1)
+            
+            # Find rotation to align v1 with x-axis
+            x_axis = np.array([1, 0, 0])
+            cross = np.cross(v1_norm, x_axis)
+            
+            if np.linalg.norm(cross) > 1e-10:  # If not already aligned
+                cross = cross / np.linalg.norm(cross)
+                dot = np.dot(v1_norm, x_axis)
+                angle = np.arccos(np.clip(dot, -1.0, 1.0))
+                
+                # Rodrigues' rotation formula
+                K = np.array([[0, -cross[2], cross[1]],
+                            [cross[2], 0, -cross[0]],
+                            [-cross[1], cross[0], 0]])
+                R1 = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+            else:
+                # Already aligned or anti-aligned
+                if dot < 0:  # Anti-aligned
+                    R1 = -np.eye(3)
+                    R1[0,0] = 1  # Flip y and z but keep x
+                else:  # Already aligned
+                    R1 = np.eye(3)
+            
+            aligned_points = (R1 @ aligned_points.T).T
+            rotation_matrix = R1 @ rotation_matrix
+    
+    if len(points) >= 3:
+        # Step 3: Rotate around x-axis so third point has z=0 and y>0
+        v2 = aligned_points[2]
+        if not np.allclose(v2[1:], 0):  # If not already on x-axis
+            # We want to rotate around x-axis to eliminate z component
+            yz_norm = np.linalg.norm(v2[1:])
+            if yz_norm > 1e-10:
+                # Angle needed to rotate point to positive y-axis
+                angle = -np.arctan2(v2[2], v2[1])
+                
+                # Rotation matrix around x-axis
+                R2 = np.array([[1, 0, 0],
+                            [0, np.cos(angle), -np.sin(angle)],
+                            [0, np.sin(angle), np.cos(angle)]])
+                
+                aligned_points = (R2 @ aligned_points.T).T
+                rotation_matrix = R2 @ rotation_matrix
+    
+    if len(points) >= 4:
+        # Step 4: If fourth point has negative z, flip around xy-plane
+        v3 = aligned_points[3]
+        if v3[2] < 0:
+            # Flip z-coordinates (rotation of 180 degrees around z-axis would also work)
+            R3 = np.array([[1, 0, 0],
+                        [0, 1, 0],
+                        [0, 0, -1]])
+            
+            aligned_points = (R3 @ aligned_points.T).T
+            rotation_matrix = R3 @ rotation_matrix
+    
+    return aligned_points
 
 class CanonicalASEPES(PotentialEnergySurface):
     def __init__(self, atoms, k_soft=10):

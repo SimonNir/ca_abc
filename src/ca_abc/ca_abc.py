@@ -506,7 +506,7 @@ class CurvatureAdaptiveABC:
             
             if np.abs(np.max(eigvals)/np.min(eigvals)) > 1e6: 
                 if verbose: 
-                    print(f"BFGS Hessian has condition number >1e6 and cannot be reliably trusted; reverting to default behavior. \nEigenvalues: {eigvals}")
+                    print(f"Approximate Hessian has condition number >1e6 and cannot be reliably trusted; reverting to default behavior. \nEigenvalues: {eigvals}")
                 self.most_recent_hessian = None
                 return 
 
@@ -569,7 +569,7 @@ class CurvatureAdaptiveABC:
                     start = prev_min_ind
                     end = curr_min_ind + 1  # include current minimum
 
-                    saddle_ind = start + np.argmax(self.biased_energies[start:end])
+                    saddle_ind = start + np.argmax(self.unbiased_energies[start:end])
                     self.saddle_indices.append(saddle_ind)
                     self.saddles.append(self.trajectory[saddle_ind])
 
@@ -577,19 +577,19 @@ class CurvatureAdaptiveABC:
                     prev_min_energy = self.unbiased_energies[prev_min_ind]
                     saddle_energy = self.unbiased_energies[saddle_ind]
 
-                    # if saddle_energy - prev_min_energy < self.min_bias_height:
-                    #     print(f"Removing previous minimum at index {prev_min_ind} (energy {prev_min_energy}) because",
-                    #           f"\ncorresponding saddle does not have sufficiently greater energy ({saddle_energy})")
+                    if saddle_energy - prev_min_energy < self.min_bias_height:
+                        print(f"Removing previous minimum at index {prev_min_ind} (energy {prev_min_energy}) because",
+                              f"\ncorresponding saddle does not have sufficiently greater energy ({saddle_energy})")
 
-                    #     # Remove the previous minimum and the newly added saddle
-                    #     self.minima.pop(-2)
-                    #     self.min_indices.pop(-2)
-                    #     self.saddle_indices.pop()
-                    #     self.saddles.pop()
+                        # Remove the previous minimum and the newly added saddle
+                        self.minima.pop(-2)
+                        self.min_indices.pop(-2)
+                        self.saddle_indices.pop()
+                        self.saddles.pop()
 
-                    #     # Optionally remove corresponding metadata if tracked
-                    #     self.energy_calls_at_each_min.pop(-2)
-                    #     self.force_calls_at_each_min.pop(-2)                
+                        # Optionally remove corresponding metadata if tracked
+                        self.energy_calls_at_each_min.pop(-2)
+                        self.force_calls_at_each_min.pop(-2)                
     
     def compute_exact_extreme_hessian_mode(self, hessian, desired_mode = "softest"):
         """

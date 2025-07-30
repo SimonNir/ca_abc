@@ -185,6 +185,14 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
   * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
   * Set up LAMMPS calculator (very easy in theory via ASE support)
 
+-----
+
 ## Support
 
 For questions or support, please contact simon\_nirenberg@brown.edu
+
+-----
+
+## Acknowledgements
+This research was supported in part by an appointment to the Oak Ridge National Laboratory Research Student Internships
+Program, sponsored by the U.S. Department of Energy and administered by the Oak Ridge Institute for Science and Education.

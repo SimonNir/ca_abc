@@ -18,20 +18,20 @@ def main():
         dump_every=30000,
 
         perturb_type="fixed",
-        default_perturbation_size=0.005,# A
+        default_perturbation_size=0.01,# A
         # default_perturbation_size=0.000001,
         scale_perturb_by_curvature=False,
         # min_perturbation_size=0.005/1.5,
         # max_perturbation_size=0.005*1.5,
      
         bias_height_type="fixed",
-        default_bias_height=0.1,# eV
+        default_bias_height=0.5,# eV
         # default_bias_height=2*0.02,
         # min_bias_height=.76/1.5,
         # max_bias_height= 1.5*.76,
 
         bias_covariance_type="fixed",
-        default_bias_covariance=0.01,# A^2
+        default_bias_covariance=0.1,# A^2
         # default_bias_covariance=(0.5*0.11)**2,
         # min_bias_covariance= 0.018087/1.5,
         # max_bias_covariance= 1.5*0.018087,
@@ -47,9 +47,9 @@ def main():
 
     opt = ScipyOptimizer(abc, 'L-BFGS-B')
     # opt = ASEOptimizer(abc, 'BFGSLineSearch')
-    opt = FIREOptimizer(abc)
+    # opt = FIREOptimizer(abc)
 
-    abc.run(max_iterations=100, stopping_minima_number=5, 
+    abc.run(max_iterations=1000, stopping_minima_number=5, 
             ignore_max_steps_on_initial_minimization = True, 
             optimizer=opt, verbose=True, save_summary=True)
 

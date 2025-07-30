@@ -17,7 +17,7 @@ def get_all_run_params():
     covs = [0.001, 0.005, 0.01, 0.05, 0.1]
     heights = [0.005, 0.01, 0.05, 0.1]
     # Fixed parameters
-    perturbations = [0.005]
+    perturbations = [0.01]
     optimizers = [0, 1]
     iters = 5
     
@@ -77,7 +77,7 @@ def single_run(args):
             conservative_ema_delta=False,
             struc_uniqueness_rmsd_threshold=1e-5, 
 
-            max_descent_steps=1000,
+            max_descent_steps=800,
             descent_convergence_threshold=1e-5 if opt==1 else 1e-2,
             max_acceptable_force_mag=1e99,
         )

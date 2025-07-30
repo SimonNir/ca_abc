@@ -2,6 +2,7 @@ import sys
 import os
 import json
 from sweep import single_run, get_all_run_params, get_completed_runs, RESULT_DIR
+import gc 
 
 def main():
     if len(sys.argv) < 2:
@@ -21,6 +22,7 @@ def main():
         success = single_run((run_id, *all_params[run_id]))
         if not success:
             print(f"Warning: Run {run_id} failed")
+        gc.collect()
 
 if __name__ == "__main__":
     main()

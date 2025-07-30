@@ -52,11 +52,12 @@ def single_run(args):
     try:
         from ca_abc.potentials import CanonicalLennardJonesCluster, cartesian_to_internal, internal_to_cartesian, align_to_canonical
         from ase import io
-        g = io.read("/home/nirenbergsd/ca_abc/examples/lj38/wales_global_min.xyz")
-        pos = cartesian_to_internal(align_to_canonical(g.positions.copy()))
+        # g = io.read("/home/nirenbergsd/ca_abc/examples/lj38/wales_global_min.xyz")
+        # g = io.read("/mnt/c/Users/simon/OneDrive - Brown University/Summer 1/ORISE/ca_abc/examples/lj38/wales_global_min.xyz")
+        # pos = cartesian_to_internal(align_to_canonical(g.positions.copy()))
         abc = CurvatureAdaptiveABC(
             potential=CanonicalLennardJonesCluster(38),
-            starting_position = pos, 
+            # starting_position = pos, 
             curvature_method="None",
             dump_every=30000,
             dump_folder=f"{RESULT_DIR}/run_{run_id}",
@@ -83,7 +84,7 @@ def single_run(args):
         )
 
         optimizer = FIREOptimizer(abc) if opt == 0 else ScipyOptimizer(abc, "BFGS")
-        abc.run(max_iterations=5000, stopping_minima_number=None, optimizer=optimizer, verbose=False)
+        abc.run(max_iterations=5000, stopping_minima_number=None, optimizer=optimizer, verbose=True)
 
         run_data = {
             'run_id': run_id,

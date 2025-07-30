@@ -12,7 +12,7 @@ print(' '.join(remaining))
 ")
 
 # Split into chunks for each core
-NUM_CORES=40
+NUM_CORES=100
 readarray -t id_array <<< "$(echo $remaining_ids | tr ' ' '\n' | shuf)"
 ids_per_core=$(( (${#id_array[@]} + NUM_CORES - 1) / NUM_CORES ))
 

@@ -13,4 +13,4 @@
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python run_one.py 157
+python run_one.py 85 192 168 78 72

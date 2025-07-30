@@ -1,0 +1,5 @@
+/home/nirenbergsd/abc_venv/lib/python3.10/site-packages/ase/calculators/lj.py:215: RuntimeWarning: overflow encountered in square
+  c12 = c6 ** 2
+/home/nirenbergsd/abc_venv/lib/python3.10/site-packages/ase/calculators/lj.py:228: RuntimeWarning: invalid value encountered in multiply
+  cutoff_fn * pairwise_forces + 2 * d_cutoff_fn
+slurmstepd: error: *** JOB 1085162 ON or-condo-c141 CANCELLED AT 2025-07-30T03:17:55 DUE TO TIME LIMIT ***

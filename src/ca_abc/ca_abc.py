@@ -96,6 +96,8 @@ class CurvatureAdaptiveABC:
         if min_bias_height is None:
             min_bias_height = default_bias_height
         self.min_bias_height = min_bias_height
+        if max_bias_height is None:
+            max_bias_height = default_bias_height
         self.max_bias_height = max_bias_height
         self.curvature_bias_height_scale = curvature_bias_height_scale  # only used if ema scaling is false 
 
@@ -107,6 +109,8 @@ class CurvatureAdaptiveABC:
         if min_bias_covariance is None:
             min_bias_covariance = np.min(np.diag(self.default_bias_covariance))
         self.min_bias_covariance = min_bias_covariance
+        if max_bias_covariance is None:
+            max_bias_covariance = np.max(np.diag(self.default_bias_covariance))
         self.max_bias_covariance = max_bias_covariance
         self.curvature_bias_covariance_scale = curvature_bias_covariance_scale # only used if ema scaling is false 
 
@@ -158,8 +162,6 @@ class CurvatureAdaptiveABC:
         self.iter_periods = [] 
         self.energy_calls_at_each_min = []
         self.force_calls_at_each_min = []
-        self.length_at_last_summary = -1
-
    
     def store_to_disk(self):
         """Store relevant data to disk using pickle."""
@@ -743,6 +745,7 @@ class CurvatureAdaptiveABC:
         output.append(f"\tTotal force calls: {self.potential.force_calls}")
         output.append(f"\tForce calls at each min: {self.force_calls_at_each_min}")
         output.append(f"\tTotal steps: {len(self.trajectory)}")
+        output.append(f"\tTotal Biases: {len(self.bias_list)}")
 
         # 5. Reference minima verification
         if hasattr(self.potential, "known_minima"):

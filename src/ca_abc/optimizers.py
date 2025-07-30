@@ -502,6 +502,13 @@ class FIREOptimizer(Optimizer):
             self.accepted_positions.append(x.copy())
             
             force = -grad
+
+            # Add NaN check and reset
+            if np.any(np.isnan(force)):
+                print("NaN detected in force! Resetting velocity.")
+                self.v = np.zeros_like(self.v)
+                force = np.zeros_like(force)
+
             fmax = np.max(np.abs(force))
 
             if fmax < f_tol:

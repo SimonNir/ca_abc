@@ -1,0 +1,5 @@
+/home/nirenbergsd/abc_venv/lib/python3.10/site-packages/ase/calculators/lj.py:222: RuntimeWarning: overflow encountered in divide
+  pairwise_forces = -24 * epsilon * (2 * c12 - c6) / r2  # du_ij
+/home/nirenbergsd/abc_venv/lib/python3.10/site-packages/ase/calculators/lj.py:235: RuntimeWarning: invalid value encountered in multiply
+  pairwise_forces = pairwise_forces[:, np.newaxis] * distance_vectors
+slurmstepd: error: *** JOB 1079393 ON or-condo-c134 CANCELLED AT 2025-07-29T07:04:50 DUE TO TIME LIMIT ***

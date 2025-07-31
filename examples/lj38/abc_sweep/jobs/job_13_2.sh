@@ -5,7 +5,7 @@
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=06:00:00
+#SBATCH --time=10:00:00
 #SBATCH --mem=3G
 #SBATCH -p burst
 #SBATCH -A birthright
@@ -13,4 +13,4 @@
 source ~/abc_venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python run_one.py 85 192 168 78 72
+python run_one.py 107 184

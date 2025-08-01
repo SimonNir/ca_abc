@@ -180,10 +180,11 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
   * Incorporate euclidean cutoff for bias summation to prevent spurious enumeration through the whole list (insignificant below 10,000 biases)
   * Include Lanczos Hessian estimation for very high (\>300) dimensional spaces, where the BFGS approximation may be imperfect
   * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
-  * Improve height metric with descent and past barrier information
+  * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al. 
   * (Machine) Learn bias covariance from descent information, allowing adaptiveness and flattening in anharmonic regions
   * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
   * Set up LAMMPS calculator (very easy in theory via ASE support)
+  * Setup deeper parallelization, with multiple different runs at different positions on the PES sharing a single bias list
 
 -----
 

@@ -118,11 +118,11 @@ def run_al_benchmark():
         
         # Bias parameters - tuned for Al surface barriers (~0.23 eV)
         bias_height_type="fixed", 
-        default_bias_height=1,  # eV
+        default_bias_height=0.3,  # eV
         
         # Covariance - based on Al lattice parameter (~4.05 Å)
         bias_covariance_type="fixed",
-        default_bias_covariance=0.1,  # Å²
+        default_bias_covariance=0.05,  # Å²
         
         # Conservative EMA scaling
         use_ema_adaptive_scaling=True,
@@ -137,7 +137,7 @@ def run_al_benchmark():
     # Run the simulation
     optimizer = FIREOptimizer(abc)
     # optimizer = ScipyOptimizer(abc, method='L-BFGS-B')
-    optimizer = ASEOptimizer(abc, optimizer_class='FIRE')
+    optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
     abc.run(
         optimizer=optimizer,
         max_iterations=300,

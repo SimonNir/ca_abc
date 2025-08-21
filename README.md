@@ -7,7 +7,7 @@ This is also the only known Python Autonomous Basin Climbing implementation curr
 
 - **Curvature-adaptive biasing**: Uses BFGS-derived Hessian information to shape anisotropic bias potentials
 - **Soft-mode perturbations**: Guides escapes along low-curvature directions for efficient basin transitions
-- **Integrated optimization**: Combines minima discovery and transition state identification in a single workflow
+- **On-the-fly Discovery**: Combines minima discovery and transition state identification in a single workflow
 - **ASE integration**: Works seamlessly with Atomic Simulation Environment for atomistic simulations
 - **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features
 

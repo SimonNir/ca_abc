@@ -85,64 +85,129 @@ class AlSurfaceDiffusion(ASESubsetPES):
         z_coords = full_pos[:, 2]
         adatom_index = np.argmax(z_coords)
         return full_pos[adatom_index]
+    
+    # In your AlSurfaceDiffusion class, add this new method:
+
+    def get_biased_atom_indices(self, z_tol=0.5, verbose=False):
+        """
+        Finds:
+        1. The adatom (highest z among free atoms)
+        2. The surface atom in the *top layer of non-adatoms* directly under the adatom (nearest in XY)
+
+        Only considers free atoms. Returns indices relative to self.free_atoms.
+
+        Parameters
+        ----------
+        z_tol : float
+            Atoms within (max_top_z - z_tol) are considered part of the top layer.
+        verbose : bool
+            If True, print debug info.
+
+        Returns
+        -------
+        [adatom_index, surface_atom_index]  (indices are for self.free_atoms)
+        """
+        free_pos = self.free_atoms.get_positions()
+
+        # 1. Identify adatom
+        adatom_index = int(np.argmax(free_pos[:, 2]))
+        adatom_pos = free_pos[adatom_index]
+        if verbose:
+            print(f"Adatom index (free_atoms): {adatom_index}, z = {adatom_pos[2]:.3f}")
+
+        # 2. Find top layer of *non-adatom* atoms (in free_atoms)
+        non_adatom_indices = [i for i in range(len(self.free_atoms)) if i != adatom_index]
+        non_adatom_pos = free_pos[non_adatom_indices]
+        max_surface_z = np.max(non_adatom_pos[:, 2])
+
+        # Tolerance filter for top layer
+        top_layer_mask = (non_adatom_pos[:, 2] >= max_surface_z - z_tol)
+        top_layer_indices = np.array(non_adatom_indices)[top_layer_mask]
+
+        if len(top_layer_indices) == 0:
+            raise RuntimeError("No top-layer surface atoms found among free_atoms")
+
+        # 3. Choose the top-layer atom closest in XY to the adatom
+        ad_xy = adatom_pos[:2]
+        top_layer_xy = free_pos[top_layer_indices, :2]
+        dxy = np.linalg.norm(top_layer_xy - ad_xy, axis=1)
+        surface_atom_index = int(top_layer_indices[np.argmin(dxy)])
+
+        if verbose:
+            print(f"Surface atom index (free_atoms): {surface_atom_index}, z = {free_pos[surface_atom_index, 2]:.3f}")
+
+        return [adatom_index, surface_atom_index]
         
+
+# In your run_al_benchmark function, modify the code like this:
 
 def run_al_benchmark():
     """
     Run the Al surface diffusion benchmark that matches Kushima et al.
     """
     from ca_abc.ca_abc import CurvatureAdaptiveABC
-    from ca_abc.optimizers import FIREOptimizer
+    from ca_abc.optimizers import ASEOptimizer
     
     # Create Al surface system
     al_system = AlSurfaceDiffusion(
-        surface_size=(5, 5),
+        surface_size=(7, 7),
         layers=6,
         vacuum=15.0,
         fix_bottom_layers=2
     )
     
     print(f"Created Al(100) surface with {len(al_system.atoms)} atoms")
-    print(f"Adatom initial position: {al_system.get_adatom_position(al_system.default_starting_position())}")
     
+    # --- New code starts here ---
+    # Get the indices for the adatom and the central surface atom
+    biased_indices = [al_system.get_biased_atom_indices()[1]]
+    # biased_indices = None # 32
+    
+    # Print the indices for verification
+    print(f"Biasing atoms with indices: {biased_indices}")
+    print(f"Their full positions are: \n{al_system.atoms.positions[biased_indices]}")
+
     # Set up CA-ABC with parameters suitable for metallic surfaces
     abc = CurvatureAdaptiveABC(
         potential=al_system,
-        curvature_method="bfgs",
+        curvature_method="None",
         dump_every=30000,
         
         # Perturbation parameters - smaller for metal surfaces
         perturb_type="fixed",
-        default_perturbation_size=0.001,  # Angstroms
+        default_perturbation_size=0.01,  # Angstroms
         scale_perturb_by_curvature=True,
         
         # Bias parameters - tuned for Al surface barriers (~0.23 eV)
         bias_height_type="fixed", 
-        default_bias_height=0.3,  # eV
+        default_bias_height=0.005,  # eV
         
         # Covariance - based on Al lattice parameter (~4.05 Å)
         bias_covariance_type="fixed",
-        default_bias_covariance=0.05,  # Å²
+        default_bias_covariance=0.5,  # Å²
         
         # Conservative EMA scaling
         use_ema_adaptive_scaling=True,
         conservative_ema_delta=True,
         
         # Convergence criteria
-        max_descent_steps=400,
-        descent_convergence_threshold=0.01,  # eV/Å
+        max_descent_steps=10000,
+        descent_convergence_threshold=1e-3,  # eV/Å
         struc_uniqueness_rmsd_threshold=0.1,  # Å
+        energy_diff_threshold=0.01,  # eV
+
+        biased_atom_indices=biased_indices
     )
-    
+
     # Run the simulation
-    optimizer = FIREOptimizer(abc)
-    # optimizer = ScipyOptimizer(abc, method='L-BFGS-B')
-    optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
+    # optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
+    # optimizer = ScipyOptimizer(abc, method='BFGS')
+    optimizer = FIREOptimizer(abc, dt=0.05, max_step_size=None)
     abc.run(
         optimizer=optimizer,
         max_iterations=300,
         verbose=True,
-        stopping_minima_number=2  # Stop after finding 5 distinct minima
+        stopping_minima_number=3  # Stop after finding 2 distinct minima
     )
 
     from ca_abc.analysis import ABCAnalysis
@@ -160,21 +225,42 @@ if __name__ == "__main__":
     # Save visited minima to a trajectory file
     template = system.atoms
     minima_structures = []
-    for x in abc.minima:
+    for i, x in enumerate(abc.minima):
+        idx = abc.minima_indices[i]
+        energy = abc.unbiased_energies[idx]
         atoms = template.copy()
         atoms.set_positions(system._reconstruct_full_position(x))
+        atoms.info['energy'] = energy
         minima_structures.append(atoms)
 
     write("al_surface_minima.xyz", minima_structures)
     print(f"Saved {len(minima_structures)} visited minima to 'al_surface_minima.xyz'")
 
-    structures = []
-    for x in abc.trajectory:
+    # Save visited saddles with energies
+    saddle_structures = []
+    for i, x in enumerate(abc.saddles):
+        idx = abc.saddle_indices[i]
+        energy = abc.unbiased_energies[idx]
         atoms = template.copy()
         atoms.set_positions(system._reconstruct_full_position(x))
+        atoms.info['energy'] = energy
+        saddle_structures.append(atoms)
+
+    write("al_surface_saddles.xyz", saddle_structures)
+    print(f"Saved {len(saddle_structures)} visited saddles to 'al_surface_saddles.xyz'")
+
+    # Save full trajectory with energies
+    structures = []
+    for i, x in enumerate(abc.trajectory):
+        idx = abc.traj_indices[i]
+        energy = abc.unbiased_energies[idx]
+        atoms = template.copy()
+        atoms.set_positions(system._reconstruct_full_position(x))
+        atoms.info['energy'] = energy
         structures.append(atoms)
 
     write("al_surface_traj.xyz", structures)
     print(f"Saved full traj to 'al_surface_traj.xyz'")
+
 
 

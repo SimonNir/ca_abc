@@ -46,7 +46,8 @@ def run_2d_simulation():
         max_acceptable_force_mag=1e99,
     )
     
-    opt = ScipyOptimizer(abc)  
+    # opt = ScipyOptimizer(abc)  
+    opt = FIREOptimizer(abc)
     abc.run(max_iterations=8000, stopping_minima_number=3, optimizer=opt, verbose=True)
 
     # Create analysis and plots

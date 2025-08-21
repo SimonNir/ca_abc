@@ -21,14 +21,15 @@ class CurvatureAdaptiveABC:
         # Optional parameters organized by category
         # Setup parameters
         starting_position=None,
+        # Note dumping can be very storage-intensive, especially with high dimensionality
         dump_every = 10000, # Iters between data dumps
         dump_folder = "abc_data_dumps", 
 
         # Curvature estimation
-        curvature_method="finite_diff",
+        curvature_method="bfgs", # 'finite_diff', 'lanczos', or 'bfgs'
         
         # Perturbation strategy
-        perturb_type="adaptive",
+        perturb_type="adaptive",  # None - Kushima et al. style deterministic exploration; # random - random perturbation, allowing parallel exploration; "adaptive" - curvature-adaptive
         scale_perturb_by_curvature=True,
         default_perturbation_size=0.05,
         min_perturbation_size = None, 
@@ -55,12 +56,15 @@ class CurvatureAdaptiveABC:
 
         energy_diff_threshold = None, # energy difference threshold at which significance is considered (e.g. if diff < threshold after relaxation, considered new minimum)
         struc_uniqueness_rmsd_threshold = 1e-3,
+        bias_filtering_cutoff = 1000, # bias_list length after which we start ignoring biases further than 3.5 sigma_max from the current position, for speedups
         
         
         # Descent and optimization
         descent_convergence_threshold=1e-4,
         max_descent_steps=600,
-        max_acceptable_force_mag = 1e99 # in practice, the optimizers actually do best with uncapped max force
+        max_acceptable_force_mag = 1e99, # in practice, the optimizers actually do best with uncapped max force
+
+        biased_atom_indices = None, # For atomistic simulations, specifies which atoms to apply bias to; by default (None), applies to all atoms
     ):
         """
         Initialize the SmartABC sampler.
@@ -124,6 +128,8 @@ class CurvatureAdaptiveABC:
 
         self.energy_diff_threshold = energy_diff_threshold if energy_diff_threshold is not None else self.min_bias_height/50
         self.struc_uniqueness_rmsd_threshold = struc_uniqueness_rmsd_threshold
+
+        self.bias_filtering_cutoff = bias_filtering_cutoff
         
         self.descent_convergence_threshold = descent_convergence_threshold
         self.max_descent_steps = max_descent_steps
@@ -131,9 +137,11 @@ class CurvatureAdaptiveABC:
         self.potential.max_acceptable_force_mag = max_acceptable_force_mag
         self.optimizer = None
 
-        if self.curvature_method not in ["bfgs", "finite_diff"] and "adaptive" in [self.bias_covariance_type, self.bias_height_type, self.perturb_type]:
+        if self.curvature_method not in ["bfgs", "finite_diff", "lanczos"] and "adaptive" in [self.bias_covariance_type, self.bias_height_type, self.perturb_type]:
             print("Warning: adaptive mode chosen for one or more parameters, but no valid curvature method supplied. Setting to \'bfgs\' by default.")
             self.curvature_method = "bfgs"
+
+        self.biased_atom_indices = biased_atom_indices
 
 
     def reset(self, starting_position=None, clean_dir=False):
@@ -233,23 +241,43 @@ class CurvatureAdaptiveABC:
             self._bias_heights = np.array([b.height for b in self.bias_list])
             self._bias_inv_covs = np.stack([b._cov_inv for b in self.bias_list])
         self._bias_cache_valid = True
-    
+
     def compute_biased_potential(self, position, unbiased: float = None) -> float:
         V = self.potential.potential(position) if unbiased is None else unbiased
 
         if not self.bias_list:
             return V
 
-        # Use cached arrays
         if not getattr(self, "_bias_cache_valid", False):
             self.update_bias_cache()
 
         pos = np.atleast_2d(position).reshape(1, -1)  # (1, d)
         diffs = pos - self._bias_centers              # (N_bias, d)
-        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, self._bias_inv_covs, diffs)  # (N_bias,)
-        V += np.sum(self._bias_heights * np.exp(exponents))
-        return V
 
+        if len(self.bias_list) > self.bias_filtering_cutoff:
+            # Apply fast Euclidean filtering
+            sigma_max = np.sqrt(self.max_bias_covariance)
+            threshold_sq = (3.5 * sigma_max) ** 2
+            distsq = np.sum(diffs**2, axis=1)
+            mask = distsq < threshold_sq
+
+            if not np.any(mask):
+                return V  # No nearby biases contribute
+
+            # Filter arrays
+            diffs = diffs[mask]
+            inv_covs = self._bias_inv_covs[mask]
+            heights = self._bias_heights[mask]
+
+            exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)
+            V += np.sum(heights * np.exp(exponents))
+        else:
+            # Fast path: no filtering
+            exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, self._bias_inv_covs, diffs)
+            V += np.sum(self._bias_heights * np.exp(exponents))
+
+        return V
+    
     def compute_biased_force(self, position, unbiased: np.ndarray = None, eps=1e-5) -> np.ndarray:
         if unbiased is None:
             try:
@@ -277,13 +305,29 @@ class CurvatureAdaptiveABC:
             self.update_bias_cache()
 
         pos = np.atleast_2d(position).reshape(1, -1)  # (1, d)
-        diffs = pos - self._bias_centers               # (N_bias, d)
+        diffs = pos - self._bias_centers              # (N_bias, d)
 
-        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, self._bias_inv_covs, diffs)  # (N_bias,)
-        mv_products = np.einsum('nij,nj->ni', self._bias_inv_covs, diffs)                # (N_bias, d)
+        if len(self.bias_list) > self.bias_filtering_cutoff:
+            # Use Euclidean distance filtering
+            sigma_max = np.sqrt(self.max_bias_covariance)
+            threshold_sq = (3.5 * sigma_max) ** 2
+            distsq = np.sum(diffs**2, axis=1)
+            mask = distsq < threshold_sq
 
-        grads = -mv_products * (self._bias_heights * np.exp(exponents))[:, None]        # (N_bias, d)
-        total_grad = -unbiased + np.sum(grads, axis=0)                                 # (d,)
+            if not np.any(mask):
+                return unbiased.copy()  # No nearby bias contribution
+
+            diffs = diffs[mask]
+            inv_covs = self._bias_inv_covs[mask]
+            heights = self._bias_heights[mask]
+        else:
+            inv_covs = self._bias_inv_covs
+            heights = self._bias_heights
+
+        exponents = -0.5 * np.einsum('ni,nij,nj->n', diffs, inv_covs, diffs)       # (N_bias,)
+        mv_products = np.einsum('nij,nj->ni', inv_covs, diffs)                     # (N_bias, d)
+        grads = -mv_products * (heights * np.exp(exponents))[:, None]             # (N_bias, d)
+        total_grad = -unbiased + np.sum(grads, axis=0)                            # (d,)
 
         force = -total_grad
         norm = np.linalg.norm(force)
@@ -293,51 +337,185 @@ class CurvatureAdaptiveABC:
 
         return force
     
-    def compute_hessian_finite_difference(self, position, f0_already_computed=False, eps=1e-3):
+    def compute_hessian_finite_difference(self, position, force_symmetric=True, eps=1e-3):
         """
-        Compute the Hessian matrix of the potential at a given position using
-        central differences on the force (which is assumed to be -∇V).
-        
+        Compute the full Hessian matrix of the potential at `position`
+        using central differences on the forces.
+
+        Args:
+            position (ndarray): shape (n,), atomic coordinates or generalized coords
+            force_symmetric (bool): enforce Hessian symmetry
+            eps (float): displacement step for finite difference
+
         Returns:
-            hessian: ndarray of shape (n, n), Hessian matrix of the potential
+            hessian (ndarray): shape (n, n), Hessian of the potential
         """
         n = len(position)
         hessian = np.zeros((n, n))
         unit = np.eye(n)
-        
-        # Central difference: dF_i/dx_j ≈ [F_i(x+e_j) - F_i(x-e_j)] / (2*eps)
+
         for j in range(n):
-            # Displace along dimension j
             pos_plus = position + eps * unit[j]
             pos_minus = position - eps * unit[j]
-            
-            f_plus = self.compute_biased_force(pos_plus)  # shape (n,)
+
+            f_plus = self.compute_biased_force(pos_plus)
             f_minus = self.compute_biased_force(pos_minus)
-            
-            # For each i, compute dF_i/dx_j
+
             df_dxj = (f_plus - f_minus) / (2 * eps)
-            
-            # Hessian_ij = -dF_i/dx_j
             hessian[:, j] = -df_dxj  # column j
 
-        # Force-symmetric Hessian
-        hessian = 0.5 * (hessian + hessian.T)
+        if force_symmetric:
+            hessian = 0.5 * (hessian + hessian.T)
 
         return hessian
+    
+    # Experimental! 
+    def estimate_hessian_lanczos(self,
+                                    position,
+                                    k=6,
+                                    mode='softest',        # 'softest' or 'hardest'
+                                    eps=1e-4,              # step for Hv finite-difference
+                                    which=None,            # internal arg derived from mode
+                                    tol=1e-6,
+                                    maxiter=None,
+                                    random_state=None,
+                                    enforce_symmetry=True):
+        """
+        Estimate an approximate dense Hessian using Lanczos (ARPACK via eigsh)
+        and Hessian-vector products computed by finite-differencing forces.
+
+        Args:
+            self: object providing `compute_biased_force(position)` -> ndarray (n,)
+            position: ndarray, shape (n,), point at which Hessian is desired
+            k: int, number of eigenpairs to compute (k << n)
+            mode: 'softest' -> compute k smallest eigenvalues; 'hardest' -> compute k largest
+            eps: float, finite-difference step for Hessian-vector product Hv
+            tol: float, eigsh tolerance
+            maxiter: int or None, eigsh max iterations
+            random_state: int or None, seed for ARPACK restart vector
+            enforce_symmetry: bool, symmetrize final matrix
+
+        Returns:
+            H_approx: ndarray (n,n), dense approximate Hessian
+        """
+        from scipy.sparse.linalg import LinearOperator, eigsh
+        position = np.asarray(position, dtype=float)
+        n = position.size
+        if k <= 0 or k > n:
+            raise ValueError("k must be between 1 and n")
+
+        # Decide which eigenvalues to request from eigsh
+        if mode == 'hardest':
+            which = 'LM'  # largest magnitude (largest eigenvalues if positive-definite)
+        elif mode == 'softest':
+            which = 'SM'  # smallest magnitude (soft modes)
+        else:
+            raise ValueError("mode must be 'softest' or 'hardest'")
+
+        # Helper: Hessian-vector product via two-sided finite difference on forces.
+        # Hv ≈ - (F(x + eps * v) - F(x - eps * v)) / (2 * eps)
+        def Hv(v):
+            # ARPACK may pass v as dtype=float64; ensure same shape
+            v = np.asarray(v, dtype=float).ravel()
+            # small safeguard if v is zero
+            norm_v = np.linalg.norm(v)
+            if norm_v == 0.0:
+                return np.zeros_like(v)
+
+            pos_plus = position + eps * v
+            pos_minus = position - eps * v
+
+            f_plus = self.compute_biased_force(pos_plus)   # shape (n,)
+            f_minus = self.compute_biased_force(pos_minus)
+
+            # Note: F = -∇V, so (F(x+)-F(x-))/(2 eps) ≈ ∇F · v = -H v
+            Hv_est = - (f_plus - f_minus) / (2.0 * eps)
+            return Hv_est
+
+        # Wrap as a LinearOperator for eigsh
+        linop = LinearOperator((n, n), matvec=Hv, dtype=float)
+
+        # Call eigsh to compute k eigenpairs
+        # For 'SM' sometimes ARPACK struggles; if that happens you can try shift-invert via sigma=0
+        try:
+            vals, vecs = eigsh(linop, k=k, which=which, tol=tol, maxiter=maxiter, v0=None, return_eigenvectors=True)
+        except Exception as e:
+            # Fallback: if requesting SM failed, try shift-invert around 0 (sigma=0) to obtain smallest algebraic
+            if mode == 'softest':
+                vals, vecs = eigsh(linop, k=k, sigma=0.0, tol=tol, maxiter=maxiter, return_eigenvectors=True)
+            else:
+                raise
+
+        # Ensure real values (numerical imaginary parts should be negligible)
+        vals = np.real_if_close(vals, tol=1000)
+        vecs = np.real_if_close(vecs, tol=1000)
+
+        # Sort eigenpairs by eigenvalue ascending
+        idx_sort = np.argsort(vals)
+        vals = vals[idx_sort]
+        vecs = vecs[:, idx_sort]
+
+        # Compute the scaling scalar mu for the identity remainder.
+        # We want mu to be "intermediate" in magnitude relative to the found eigenvalues.
+        # Robust strategy:
+        #   - use geometric mean between max(|vals|) and min_nonzero(|vals|)
+        #   - if all values are zero or tiny, fallback to 1.0
+        abs_vals = np.abs(vals)
+        eps_small = 1e-12
+        max_abs = max(abs_vals.max(), eps_small)
+        min_nonzero = max(abs_vals[abs_vals > eps_small].min() if np.any(abs_vals > eps_small) else eps_small, eps_small)
+
+        # geometric mean of magnitudes
+        mu_mag = np.sqrt(max_abs * min_nonzero)
+
+        # choose mu with sign positive (we want identity-like positive stiffness)
+        mu = float(mu_mag)
+
+        # Build dense approximation:
+        # H_approx = mu * I + Q (Lambda - mu I) Q^T
+        # where Q has the k eigenvectors as columns, Lambda diag(vals)
+        Q = vecs  # shape (n, k)
+        Lambda = np.diag(vals)  # shape (k, k)
+
+        # Compute Q (Lambda - mu I_k) Q^T efficiently
+        # delta = (Lambda - mu I_k)
+        delta = Lambda - (mu * np.eye(k))
+        H_correction = Q @ delta @ Q.T
+
+        H_approx = mu * np.eye(n) + H_correction
+
+        if enforce_symmetry:
+            # Force exact symmetry to remove numerical asymmetry
+            H_approx = 0.5 * (H_approx + H_approx.T)
+
+        return H_approx
 
 
     def deposit_bias(self, center: np.ndarray = None, covariance: float | np.ndarray = None, height: float = None, verbose=False):
         pos = center if center is not None else self.position.copy()
 
+        # Create a list of the full DOF indices to bias
+        if hasattr(self, 'biased_atom_indices') and self.biased_atom_indices is not None:
+            dof_indices = []
+            for i in self.biased_atom_indices:
+                dof_indices.extend([3 * i, 3 * i + 1, 3 * i + 2])
+        else:
+            dof_indices = list(range(self.dimension))
+
+        # --- Extract sub-Hessian ---
+        if self.most_recent_hessian is not None:
+            sub_hessian = self.most_recent_hessian[np.ix_(dof_indices, dof_indices)]
+        else:
+            sub_hessian = None
+
+        # --- Determine Bias Height ---
         if height is not None:
             h = height
         else:
-            if self.bias_height_type == "adaptive" and self.most_recent_hessian is not None:
-                _, curvature = self.get_softest_hessian_mode(center)
-
+            if self.bias_height_type == "adaptive" and sub_hessian is not None:
+                _, curvature = self.compute_exact_extreme_hessian_mode(sub_hessian, desired_mode="softest")
                 if self.use_ema_adaptive_scaling:
                     log_height = np.log(self.curvature_bias_height_scale * np.abs(curvature))
-
                     if self.log_running_height_ema is None:
                         self.log_running_height_ema = log_height
                     else:
@@ -345,7 +523,6 @@ class CurvatureAdaptiveABC:
                             self.ema_alpha * log_height +
                             (1 - self.ema_alpha) * self.log_running_height_ema
                         )
-
                     h = np.exp(self.log_running_height_ema)
                 else:
                     h = self.curvature_bias_height_scale * np.abs(curvature)
@@ -353,53 +530,30 @@ class CurvatureAdaptiveABC:
                 h = self.default_bias_height
 
         clipped_h = np.clip(h, self.min_bias_height, self.max_bias_height)
-
         if verbose and self.bias_height_type.lower() == "adaptive":
             print("Proposed height:", h)
             print("Clipped height:", clipped_h)
 
+        # --- Construct Reduced Covariance ---
         if covariance is not None:
-            cov = covariance
+            reduced_cov = covariance[np.ix_(dof_indices, dof_indices)] if not np.isscalar(covariance) else np.eye(len(dof_indices)) * covariance
         else:
-            if self.bias_covariance_type == "adaptive" and self.most_recent_hessian is not None:
-                cov = np.linalg.inv(self.most_recent_hessian)
+            if self.bias_covariance_type == "adaptive" and sub_hessian is not None:
+                reduced_cov = np.linalg.inv(sub_hessian)
             else:
-                cov = self.default_bias_covariance
+                if np.isscalar(self.default_bias_covariance):
+                    reduced_cov = np.eye(len(dof_indices)) * self.default_bias_covariance
+                else:
+                    reduced_cov = self.default_bias_covariance[np.ix_(dof_indices, dof_indices)]
 
-        eigvals, eigvecs = np.linalg.eigh(np.atleast_2d(cov))
+        # --- Eigendecompose and Clip in Subspace ---
+        eigvals, eigvecs = np.linalg.eigh(np.atleast_2d(reduced_cov))
 
         if self.bias_covariance_type == "adaptive":
-            if self.use_ema_adaptive_scaling and self.most_recent_hessian is not None:
-
-                proposed_vars = clipped_h * eigvals
-
-                log_mean_var = np.mean(np.log(proposed_vars))
-
-                if self.log_running_variance_ema is None:
-                    self.log_running_variance_ema = log_mean_var
-                else:
-                    self.log_running_variance_ema = (
-                        self.ema_alpha * log_mean_var +
-                        (1 - self.ema_alpha) * self.log_running_variance_ema
-                    )
-
-                min_variance = self.min_bias_covariance
-                max_variance = self.max_bias_covariance 
-                log_target_var = 0.5 * (np.log(min_variance) + np.log(max_variance))
-
-                log_delta = log_target_var - self.log_running_variance_ema
-                delta = np.exp(log_delta)
-                if self.conservative_ema_delta:
-                    delta = np.clip(delta, 0.1, 1) # prevent overbiasing by keeping delta <= 1
-                
-                var_along_modes = delta * proposed_vars
-
-                if verbose:
-                    print("EMA log variance:", self.log_running_variance_ema)
-                    print("Target log variance:", log_target_var)
-                    print("Dynamic delta_cov:", delta)
-            else:
-                var_along_modes =  clipped_h * self.curvature_bias_covariance_scale * eigvals
+            if self.use_ema_adaptive_scaling and sub_hessian is not None:
+                # You may insert additional EMA logic here if desired
+                pass
+            var_along_modes = clipped_h * self.curvature_bias_covariance_scale * eigvals
         else:
             var_along_modes = eigvals
 
@@ -409,30 +563,36 @@ class CurvatureAdaptiveABC:
             print("Proposed var:", var_along_modes)
             print("Clipped var:", clipped_eigvals)
 
-        clipped_cov = eigvecs @ np.diag(clipped_eigvals) @ eigvecs.T
-        clipped_cov = 0.5 * (clipped_cov + clipped_cov.T)
-        clipped_cov = np.atleast_2d(clipped_cov)
+        clipped_cov_reduced = eigvecs @ np.diag(clipped_eigvals) @ eigvecs.T
+        clipped_cov_reduced = 0.5 * (clipped_cov_reduced + clipped_cov_reduced.T)
 
+        # --- Embed into Full Covariance Matrix ---
+        large_variance = 1e4  # or even 1e10
+        clipped_cov_full = np.eye(self.dimension) * large_variance
+        clipped_cov_full[np.ix_(dof_indices, dof_indices)] = clipped_cov_reduced
+
+
+        # --- Final Sanity Checks ---
         try:
-            assert clipped_cov.shape == (len(eigvals), len(eigvals)), "Matrix not square"
-            assert np.allclose(clipped_cov, clipped_cov.T), "Not symmetric"
+            assert clipped_cov_full.shape == (self.dimension, self.dimension), "Final covariance matrix not full-dimensional"
+            assert np.allclose(clipped_cov_full, clipped_cov_full.T), "Not symmetric"
         except AssertionError as e:
             print("Error:", e)
-            print("Covariance matrix that caused error:\n", clipped_cov)
+            print("Covariance matrix that caused error:\n", clipped_cov_full)
             sys.exit(1)
 
-        bias = GaussianBias(center=pos, covariance=clipped_cov, height=clipped_h)
+        # --- Create and Store Bias ---
+        bias = GaussianBias(center=pos, covariance=clipped_cov_full, height=clipped_h)
         self.bias_list.append(bias)
-
-        # Update cache after adding new bias
         self.update_bias_cache()
+
 
         # if verbose and self.bias_covariance_type.lower() == "adaptive":
         #     approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
         #     print("Approximate bias volume:", approx_vol)
 
 
-    def descend(self, max_steps=None, convergence_threshold=None):
+    def descend(self, max_steps=None, convergence_threshold=None, verbose=False):
         """
         Efficient descent with built-in state recording that avoids callbacks.
         All force and energy calculations are done exactly once per step.
@@ -443,7 +603,7 @@ class CurvatureAdaptiveABC:
         max_attempts = 10
         attempt = 0
         while attempt == 0 or attempt < max_attempts and message == "Desired error not necessarily achieved due to precision loss.": 
-            result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold)
+            result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold, verbose=verbose)
             final_pos = result['x']
             converged = result['converged']
             hess_inv = result['hess_inv'] if 'hess_inv' in result else None
@@ -470,7 +630,7 @@ class CurvatureAdaptiveABC:
         if not converged:
                 if 'message' in result: 
                     print(result['message'])
-
+        
         self._process_curvature_info(final_pos, hess_inv)
 
         # For debug purposes:
@@ -526,7 +686,10 @@ class CurvatureAdaptiveABC:
         if self.curvature_method == "finite_diff":
             self.most_recent_hessian = self.compute_hessian_finite_difference(
                 final_pos, 
-                f0_already_computed=True
+            )
+        elif self.curvature_method.lower() == "lanczos":
+            self.most_recent_hessian = self.estimate_hessian_lanczos(
+                final_pos,
             )
         elif self.curvature_method.lower() == "bfgs":
             if hess_inv is not None: 
@@ -547,8 +710,6 @@ class CurvatureAdaptiveABC:
                 rmsds = np.sqrt(np.mean(diff**2, axis=1)) 
                 
                 return np.all(rmsds >= threshold)
-            
-
             
             if is_unique(final_pos, self.minima, threshold=self.struc_uniqueness_rmsd_threshold):
                 print(f"Identified minimum at position {final_pos} with unbiased energy {self.unbiased_energies[-1]}")
@@ -658,7 +819,8 @@ class CurvatureAdaptiveABC:
         self.position += scale * direction
 
     
-    def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, summary_file=None, stopping_minima_number=None, ignore_max_steps_on_initial_minimization=True):
+    def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, 
+            summary_file=None, stopping_minima_number=None, ignore_max_steps_on_initial_minimization=True):
         """
         Run the ABC simulation.
         
@@ -676,9 +838,9 @@ class CurvatureAdaptiveABC:
             for iteration in range(self.current_iteration, max_iterations):
                 
                 if ignore_max_steps_on_initial_minimization and iteration == 0: 
-                    converged = self.descend(max_steps=self.max_descent_steps*100)
+                    converged = self.descend(max_steps=self.max_descent_steps*100, verbose=verbose)
                 else: 
-                    converged = self.descend()
+                    converged = self.descend(verbose=verbose)
 
                 pos = self.position.copy()
 

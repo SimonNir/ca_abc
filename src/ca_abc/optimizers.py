@@ -68,14 +68,47 @@ class Optimizer(ABC):
             'biased_forces': [self.biased_forces[i] for i in indices]
         }
 
-    def descend(self, x0, max_steps=None, convergence_threshold=None):
+    def descend(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
         """Universal descent method (same for all backends)"""
         self._reset_state()
-        result = self._run_optimization(x0, max_steps, convergence_threshold)
+        result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
+        if result['hess_inv'] is None and self.abc_sim.curvature_method.lower() == 'adaptive':
+            result['hess_inv'] = self.hess_inv
         return result, self.get_traj_data()
     
+    @property
+    def hess_inv(self):
+        """Return an estimate of the inverse Hessian at the final step."""
+        # Default: use BFGS reconstruction from trajectory if available
+        if hasattr(self, 'trajectory') and hasattr(self, 'biased_forces') and len(self.trajectory) >= 2:
+            try:
+                return bfgs_inverse_hessian(self.trajectory, self.biased_forces)
+            except Exception as e:
+                print(f"Warning: could not compute BFGS inverse Hessian: {e}")
+        # Fallback for ASE optimizers storing accepted positions/forces
+        if hasattr(self, 'accepted_positions') and len(self.accepted_positions) >= 2:
+            try:
+                forces = getattr(self, 'biased_forces', None)
+                if forces is None:
+                    # Approximate forces from finite differences? Could skip.
+                    forces = [np.zeros_like(p) for p in self.accepted_positions]
+                return bfgs_inverse_hessian(self.accepted_positions, forces)
+            except Exception as e:
+                print(f"Warning: could not compute BFGS inverse Hessian: {e}")
+        # SciPy methods that provide hess_inv
+        if hasattr(self, '_result'):
+            if hasattr(self._result, 'hess_inv'):
+                if isinstance(self._result.hess_inv, np.ndarray):
+                    return self._result.hess_inv
+                elif hasattr(self._result.hess_inv, 'matvec'):
+                    # Convert LinearOperator to dense
+                    n = self._result.x.size
+                    I = np.eye(n)
+                    return np.column_stack([self._result.hess_inv.matvec(I[:, i]) for i in range(n)])
+        raise AttributeError("Inverse Hessian not available; run optimizer or accumulate enough trajectory data.")
+    
     @abstractmethod
-    def _run_optimization(self, x0, max_steps, convergence_threshold):
+    def _run_optimization(self, x0, max_steps, convergence_threshold, verbose=False):
         """
         Backend-specific optimization (implemented by child classes)
         Should call _compute()
@@ -110,7 +143,7 @@ class ScipyOptimizer(Optimizer):
         self._result = None
         self.accepted_steps = []
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
         self._reset_state()
         self.accepted_steps = [x0.copy()]
         last_accepted_x = x0.copy()
@@ -223,7 +256,7 @@ class ASEOptimizer(Optimizer):
         self._current_atoms = None
         self._result = None  # For consistency with ScipyOptimizer
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):        
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):        
         self._reset_state()
         self.accepted_positions = []
         self._last_accepted_pos = None
@@ -231,7 +264,10 @@ class ASEOptimizer(Optimizer):
 
         # Handle both regular and canonical PES cases
         if isinstance(self.abc_sim.potential, ASEPotentialEnergySurface):
-            atoms = self.abc_sim.potential.atoms.copy()
+            if hasattr(self.abc_sim.potential, "free_atoms"):
+                atoms = self.abc_sim.potential.free_atoms
+            else:
+                atoms = self.abc_sim.potential.atoms.copy()
             atoms.set_positions(x0.reshape(-1, 3))
         # elif hasattr(self.abc_sim.potential, 'atoms'):  # For canonical PES
             # atoms = self.abc_sim.potential.atoms.copy()
@@ -477,7 +513,7 @@ class FIREOptimizer(Optimizer):
         self.v = None
         self.accepted_positions = []
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None):
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
         x = x0.copy()
         self.v = np.zeros_like(x)
         dt = self.dt
@@ -500,6 +536,9 @@ class FIREOptimizer(Optimizer):
             energy, grad = self._compute(x)
             # Now x is in trajectory, so add it to accepted_positions
             self.accepted_positions.append(x.copy())
+
+            if verbose:
+                print(f"Step {step}: Energy = {energy:.6f} eV, |F|_max = {np.max(np.abs(grad)):.6f} eV/Å")
             
             force = -grad
 
@@ -541,7 +580,7 @@ class FIREOptimizer(Optimizer):
 
             # Clip step size to max_step_size
             step_norm = np.linalg.norm(step_vec)
-            if step_norm > max_step_size:
+            if max_step_size is not None and step_norm > max_step_size:
                 step_vec = step_vec / step_norm * max_step_size
 
             x = x + step_vec

@@ -11,6 +11,12 @@ abc_data_dumps/abc_dump_iter_3000.pkl
 # Ignore all gifs 
 *.gif
 
+# Ignore large .xyz files 
+examples/al_surface_diffusion/al_surface_traj.xyz
+examples/al_surface_diffusion/5_5_5_al_surface_traj.xyz
+*.traj
+/trajectories
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -69,7 +75,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -218,3 +223,4 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+

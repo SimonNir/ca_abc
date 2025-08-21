@@ -231,14 +231,6 @@ class ASEPotentialEnergySurface(PotentialEnergySurface):
         forces = self.atoms.get_forces()
         return -forces.flatten() # Flatten to match your 'position' input shape
 
-from ase import Atoms
-from ase.calculators.lj import LennardJones
-import numpy as np
-
-import numpy as np
-from ase import Atoms
-from ase.calculators.lj import LennardJones
-
 # DEPRECATED: USE CANONICAL
 # class LennardJonesCluster(ASEPotentialEnergySurface):
 #     def __init__(self, num_atoms, initial_positions=None,
@@ -339,7 +331,71 @@ from ase.calculators.lj import LennardJones
 
 #     def known_saddles(self):
 #         return []
+
+
+from ase.constraints import FixAtoms
+import numpy as np
+
+class ASESubsetPES(ASEPotentialEnergySurface):
+    """
+    A version of ASEPotentialEnergySurface that only exposes movable atoms.
+    Fixed atoms (via ASE FixAtoms) are automatically ignored in input/output.
+    """
+    def __init__(self, ase_atoms, calculator):
+        super().__init__(ase_atoms, calculator)
+
+        # Identify fixed atoms via ASE constraints
+        fixed_indices = set()
+        for c in self.atoms.constraints:
+            if isinstance(c, FixAtoms):
+                fixed_indices.update(c.index)
+        
+        self.fixed_indices = sorted(fixed_indices)
+        self.free_indices = sorted(set(range(len(self.atoms))) - set(self.fixed_indices))
+
+        self.n_total = len(self.atoms)
+        self.n_free = len(self.free_indices)
+
+        # Precompute index mappings
+        self.free_atom_mask = np.array([i in self.free_indices for i in range(self.n_total)], dtype=bool)
+
+    def _reconstruct_full_position(self, free_position: np.ndarray) -> np.ndarray:
+        """
+        Takes a position vector (flattened) for only the free atoms and reconstructs
+        the full N x 3 array with fixed atoms inserted from the original ASE object.
+        """
+        full_positions = self.atoms.positions.copy()
+        full_positions[self.free_atom_mask] = free_position.reshape(-1, 3)
+        return full_positions
     
+    @property
+    def free_atoms(self):
+        return self.atoms[self.free_indices]
+
+    def _extract_free_gradient(self, full_gradient: np.ndarray) -> np.ndarray:
+        """
+        Extracts flattened gradient vector only for the free atoms.
+        """
+        return full_gradient.reshape(-1, 3)[self.free_atom_mask].flatten()
+
+    def _potential(self, free_position: np.ndarray) -> float:
+        full_pos = self._reconstruct_full_position(free_position)
+        self.atoms.positions = full_pos
+        return self.atoms.get_potential_energy()
+
+    def _gradient(self, free_position: np.ndarray) -> np.ndarray:
+        full_pos = self._reconstruct_full_position(free_position)
+        self.atoms.positions = full_pos
+        forces = self.atoms.get_forces()  # shape (N, 3)
+        full_grad = -forces
+        return self._extract_free_gradient(full_grad)
+
+    def default_starting_position(self) -> np.ndarray:
+        """
+        Returns the initial guess vector (flattened) for free atoms only.
+        """
+        return self.atoms.positions[self.free_atom_mask].flatten()
+
 
 import numpy as np
 from ase import Atoms

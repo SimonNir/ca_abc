@@ -85,7 +85,7 @@ Use different optimizers by passing an optimizer instance:
 
 ```python
 from optimizers import ASEOptimizer
-optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
+optimizer = ASEOptimizer(abc, optimizer_class='FIRE')
 abc.run(optimizer=optimizer)
 ```
 

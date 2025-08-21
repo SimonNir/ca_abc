@@ -2,6 +2,7 @@
 
 A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of pathways along rugged potential energy surfaces (PES) without CVs or endpoint information.
 This is also the only known Python Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use for any chemistry, physics, or materials simulations your heart desires!
+Note that this repo, especially the examples, is a work in progress. Many new features, improvements, examples, and analysis tools are actively in development. 
 
 ## Key Features
 
@@ -9,7 +10,7 @@ This is also the only known Python Autonomous Basin Climbing implementation curr
 - **Soft-mode perturbations**: Guides escapes along low-curvature directions for efficient basin transitions
 - **On-the-fly Discovery**: Combines minima discovery and transition state identification in a single workflow
 - **ASE integration**: Works seamlessly with Atomic Simulation Environment for atomistic simulations
-- **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features
+- **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features and allowed ranges
 
 ---
 
@@ -177,10 +178,9 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
 
 ## Future Directions
 
-  * Include Lanczos Hessian estimation for very high (\>300) dimensional spaces, where the BFGS approximation may be imperfect
-  * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
   * Incorporate a 'deterministic mode', mimicking Kushima et al's original strategy more exactly
-  * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al. 
+  * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al.
+  * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
   * (Machine) Learn bias covariance from descent information, allowing adaptiveness and flattening in anharmonic regions
   * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
   * Set up LAMMPS calculator (very easy in theory via ASE support)

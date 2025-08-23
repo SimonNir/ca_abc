@@ -17,7 +17,6 @@ Note that this repo, especially the examples, is a work in progress. Many new fe
 ## Installation
 
 ```bash
-pip install -r requirements.txt 
 git clone https://github.com/SimonNir/ca_abc.git
 cd ca_abc
 pip install -e .

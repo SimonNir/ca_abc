@@ -2,6 +2,7 @@
 
 A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of pathways along rugged potential energy surfaces (PES) without CVs or endpoint information.
 This is also the only known Python Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use for any chemistry, physics, or materials simulations your heart desires!
+
 Note that this repo, especially the examples, is a work in progress. Many new features, improvements, examples, and analysis tools are actively in development. 
 
 ## Key Features

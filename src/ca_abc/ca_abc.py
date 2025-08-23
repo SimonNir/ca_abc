@@ -819,8 +819,9 @@ class CurvatureAdaptiveABC:
         self.position += scale * direction
 
     
-    def run(self, optimizer=None, max_iterations=100, verbose=True, save_summary=False, 
-            summary_file=None, stopping_minima_number=None, ignore_max_steps_on_initial_minimization=True):
+    def run(self, optimizer=None, max_iterations=100, verbose=True, verbose_opt=False,
+            save_summary=False, summary_file=None, stopping_minima_number=None, 
+            ignore_max_steps_on_initial_minimization=True):
         """
         Run the ABC simulation.
         
@@ -838,9 +839,9 @@ class CurvatureAdaptiveABC:
             for iteration in range(self.current_iteration, max_iterations):
                 
                 if ignore_max_steps_on_initial_minimization and iteration == 0: 
-                    converged = self.descend(max_steps=self.max_descent_steps*100, verbose=verbose)
+                    converged = self.descend(max_steps=self.max_descent_steps*100, verbose=verbose_opt)
                 else: 
-                    converged = self.descend(verbose=verbose)
+                    converged = self.descend(verbose=verbose_opt)
 
                 pos = self.position.copy()
 

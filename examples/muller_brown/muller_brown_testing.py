@@ -6,14 +6,14 @@ import numpy as np
 
 def run_2d_simulation():
     """Run 2D ABC simulation with Muller-Brown potential."""
-    # np.random.seed(420)
+    np.random.seed(420)
     print("Starting 2D ABC Simulation")
     print("=" * 50)
 
     height = 4.556086
     cov = 0.0088451956
     ad_factor = 1.5
-    bias_type = "fixed"
+    bias_type = "adaptive"
     
     abc = CurvatureAdaptiveABC(
         potential=StandardMullerBrown2D(),
@@ -52,8 +52,8 @@ def run_2d_simulation():
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
-    analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
-    analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
+    # analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
+    # analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
 
     # fixed: 52002
     # adaptive cov: 41283

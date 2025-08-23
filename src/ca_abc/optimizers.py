@@ -72,13 +72,20 @@ class Optimizer(ABC):
         """Universal descent method (same for all backends)"""
         self._reset_state()
         result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
-        if result['hess_inv'] is None and self.abc_sim.curvature_method.lower() == 'adaptive':
+          # Only compute fallback if optimizer did NOT already provide a Hessian
+        if result.get('hess_inv', None) is None and self.abc_sim.curvature_method.lower() == 'adaptive':
             result['hess_inv'] = self.hess_inv
         return result, self.get_traj_data()
     
+    
     @property
     def hess_inv(self):
-        """Return an estimate of the inverse Hessian at the final step."""
+        """
+        Return an estimate of the inverse Hessian at the final step.
+        Be warned: sometimes, this performs worse than including this procedure 
+        directly in the subclass itself, as I have done in FIREOptimizer. 
+        Therefore, I recommend you treat this only as a fallback. 
+        """
         # Default: use BFGS reconstruction from trajectory if available
         if hasattr(self, 'trajectory') and hasattr(self, 'biased_forces') and len(self.trajectory) >= 2:
             try:
@@ -124,7 +131,149 @@ class Optimizer(ABC):
         """
         pass 
 
+from scipy.optimize._hessian_update_strategy import BFGS
 
+def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
+    if len(positions) != len(forces):
+        raise ValueError("positions and forces must have the same length")
+    if len(positions) < 2:
+        raise ValueError("Need at least two position-force pairs")
+
+    n = positions[0].shape[0]
+    updater = BFGS(exception_strategy='skip_update', init_scale='auto')
+    updater.initialize(n, approx_type='inv_hess')  # inverse Hessian approx
+
+    if assume_forces_are_neg_grads:
+        grads = [-f for f in forces]
+    else:
+        grads = forces
+
+    for i in range(len(positions) - 1):
+        s = positions[i+1] - positions[i]
+        y = grads[i+1] - grads[i]
+        updater.update(s, y)
+
+    return updater.get_matrix()
+
+class FIREOptimizer(Optimizer):
+    def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
+                 f_inc=1.05, f_dec=0.5, alpha_dec=0.95, max_steps=1000,
+                 f_tol=1e-4, max_step_size=0.05, velocity_damping=0.9):
+        """
+        - Smaller dt and dt_max for cautious steps
+        - Added max_step_size to clip max displacement per step
+        - velocity_damping applied every step to reduce momentum buildup
+        """
+        super().__init__(abc_sim)
+        self.dt = dt
+        self.alpha = alpha
+        self.dt_max = dt_max
+        self.N_min = N_min
+        self.f_inc = f_inc
+        self.f_dec = f_dec
+        self.alpha_dec = alpha_dec
+        self.max_steps = max_steps
+        self.f_tol = f_tol
+        self.max_step_size = max_step_size
+        self.velocity_damping = velocity_damping
+
+        self.v = None
+        self.accepted_positions = []
+
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
+        x = x0.copy()
+        self.v = np.zeros_like(x)
+        dt = self.dt
+        alpha = self.alpha
+        N_min = self.N_min
+        f_inc = self.f_inc
+        f_dec = self.f_dec
+        alpha_dec = self.alpha_dec
+        dt_max = self.dt_max
+        max_steps = max_steps or self.max_steps
+        f_tol = convergence_threshold or self.f_tol
+        max_step_size = self.max_step_size
+        velocity_damping = self.velocity_damping
+
+        n_pos = 0
+        # Don't add initial position here - let the first _compute() call handle it
+        self.accepted_positions = [] 
+
+        for step in range(max_steps):
+            energy, grad = self._compute(x)
+            # Now x is in trajectory, so add it to accepted_positions
+            self.accepted_positions.append(x.copy())
+
+            if verbose:
+                print(f"Step {step}: Energy = {energy:.6f} eV, |F|_max = {np.max(np.abs(grad)):.6f} eV/Å")
+            
+            force = -grad
+
+            # Add NaN check and reset
+            if np.any(np.isnan(force)):
+                print("NaN detected in force! Resetting velocity.")
+                self.v = np.zeros_like(self.v)
+                force = np.zeros_like(force)
+
+            fmax = np.max(np.abs(force))
+
+            if fmax < f_tol:
+                break
+
+            self.v += dt * force
+
+            P = np.dot(force, self.v)
+            v_norm = np.linalg.norm(self.v)
+            f_norm = np.linalg.norm(force)
+            if f_norm > 1e-20 and v_norm > 1e-20:
+                self.v = (1 - alpha) * self.v + alpha * force * (v_norm / f_norm)
+
+            if P > 0:
+                n_pos += 1
+                if n_pos > N_min:
+                    dt = min(dt * f_inc, dt_max)
+                    alpha *= alpha_dec
+            else:
+                self.v[:] = 0
+                dt *= f_dec
+                alpha = self.alpha
+                n_pos = 0
+
+            # Apply velocity damping to reduce momentum buildup
+            self.v *= velocity_damping
+
+            # Proposed step
+            step_vec = dt * self.v
+
+            # Clip step size to max_step_size
+            step_norm = np.linalg.norm(step_vec)
+            if max_step_size is not None and step_norm > max_step_size:
+                step_vec = step_vec / step_norm * max_step_size
+
+            x = x + step_vec
+
+        converged = (fmax < f_tol)
+
+        # Compute BFGS inverse Hessian using full trajectory (like SciPy does)
+        hess_inv = None
+        if len(self.trajectory) >= 2:
+            try:
+                hess_inv = bfgs_inverse_hessian(self.trajectory, self.biased_forces)
+            except Exception as e:
+                print(f"Warning: Could not compute BFGS inverse Hessian: {e}")
+                hess_inv = None
+
+        return {
+            'x': x,
+            'energy': energy,
+            'converged': converged,
+            'nsteps': step + 1,
+            'hess_inv': hess_inv
+        }
+
+    def _accepted_steps(self):
+        return self.accepted_positions.copy()
+    
 from scipy.optimize import minimize
 import numpy as np
 
@@ -391,218 +540,3 @@ class _ASECalculatorWrapper(Calculator):
     def get_stress(self, atoms=None, **kwargs):
         # Dummy implementation required by some ASE optimizers
         return np.zeros(6)    
-
-def manual_bfgs_inverse_hessian(positions, forces):
-    """
-    Approximates the inverse Hessian at the final position using BFGS updates.
-
-    Parameters:
-    - positions: list of np.ndarray of shape (n,)
-    - forces: list of np.ndarray of shape (n,) (assumed to be negative gradients)
-
-    Returns:
-    - H: np.ndarray of shape (n, n), the approximate inverse Hessian
-    """
-    if len(positions) != len(forces):
-        raise ValueError("positions and forces must be the same length")
-    if len(positions) < 2:
-        raise ValueError("Need at least two position-force pairs")
-
-    n = positions[0].shape[0]
-    H = np.eye(n)  # initial inverse Hessian
-
-    for i in range(len(positions) - 1):
-        s = positions[i+1] - positions[i]       # step
-        y = -(forces[i+1] - forces[i])             # gradient difference (grad = -force)
-        
-        ys = np.dot(y, s)
-        if ys <= 1e-50:
-            # print(ys)
-            # Skip update if curvature condition fails
-            # print("curvature condition not satisfied; hess_inv update skipped")
-            if ys > 0: 
-                print(f"Hessian Update Warning: ys of {ys} skipped for being too small in magnitude")
-            continue
-        
-        rho = 1.0 / ys
-        I = np.eye(n)
-        Hy = H @ y
-        outer_ss = np.outer(s, s)
-        outer_sy = np.outer(s, y)
-        outer_ys = np.outer(y, s)
-        outer_Hy_yH = np.outer(Hy, Hy)
-
-        H = (I - rho * outer_sy) @ H @ (I - rho * outer_ys) + rho * outer_ss
-
-    return H
-
-import numpy as np
-from scipy.optimize._hessian_update_strategy import BFGS
-from copy import deepcopy
-
-def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
-    if len(positions) != len(forces):
-        raise ValueError("positions and forces must have the same length")
-    if len(positions) < 2:
-        raise ValueError("Need at least two position-force pairs")
-
-    n = positions[0].shape[0]
-    updater = BFGS(exception_strategy='skip_update', init_scale='auto')
-    updater.initialize(n, approx_type='inv_hess')  # inverse Hessian approx
-
-    if assume_forces_are_neg_grads:
-        grads = [-f for f in forces]
-    else:
-        grads = forces
-
-    for i in range(len(positions) - 1):
-        s = positions[i+1] - positions[i]
-        y = grads[i+1] - grads[i]
-        updater.update(s, y)
-
-    return updater.get_matrix()
-
-import numpy as np
-from scipy.optimize._hessian_update_strategy import BFGS
-from copy import deepcopy
-
-def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
-    if len(positions) != len(forces):
-        raise ValueError("positions and forces must have the same length")
-    if len(positions) < 2:
-        raise ValueError("Need at least two position-force pairs")
-
-    n = positions[0].shape[0]
-    updater = BFGS(exception_strategy='skip_update', init_scale='auto')
-    updater.initialize(n, approx_type='inv_hess')  # inverse Hessian approx
-
-    if assume_forces_are_neg_grads:
-        grads = [-f for f in forces]
-    else:
-        grads = forces
-
-    for i in range(len(positions) - 1):
-        s = positions[i+1] - positions[i]
-        y = grads[i+1] - grads[i]
-        updater.update(s, y)
-
-    return updater.get_matrix()
-
-class FIREOptimizer(Optimizer):
-    def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
-                 f_inc=1.05, f_dec=0.5, alpha_dec=0.95, max_steps=1000,
-                 f_tol=1e-4, max_step_size=0.05, velocity_damping=0.9):
-        """
-        - Smaller dt and dt_max for cautious steps
-        - Added max_step_size to clip max displacement per step
-        - velocity_damping applied every step to reduce momentum buildup
-        """
-        super().__init__(abc_sim)
-        self.dt = dt
-        self.alpha = alpha
-        self.dt_max = dt_max
-        self.N_min = N_min
-        self.f_inc = f_inc
-        self.f_dec = f_dec
-        self.alpha_dec = alpha_dec
-        self.max_steps = max_steps
-        self.f_tol = f_tol
-        self.max_step_size = max_step_size
-        self.velocity_damping = velocity_damping
-
-        self.v = None
-        self.accepted_positions = []
-
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
-        x = x0.copy()
-        self.v = np.zeros_like(x)
-        dt = self.dt
-        alpha = self.alpha
-        N_min = self.N_min
-        f_inc = self.f_inc
-        f_dec = self.f_dec
-        alpha_dec = self.alpha_dec
-        dt_max = self.dt_max
-        max_steps = max_steps or self.max_steps
-        f_tol = convergence_threshold or self.f_tol
-        max_step_size = self.max_step_size
-        velocity_damping = self.velocity_damping
-
-        n_pos = 0
-        # Don't add initial position here - let the first _compute() call handle it
-        self.accepted_positions = [] 
-
-        for step in range(max_steps):
-            energy, grad = self._compute(x)
-            # Now x is in trajectory, so add it to accepted_positions
-            self.accepted_positions.append(x.copy())
-
-            if verbose:
-                print(f"Step {step}: Energy = {energy:.6f} eV, |F|_max = {np.max(np.abs(grad)):.6f} eV/Å")
-            
-            force = -grad
-
-            # Add NaN check and reset
-            if np.any(np.isnan(force)):
-                print("NaN detected in force! Resetting velocity.")
-                self.v = np.zeros_like(self.v)
-                force = np.zeros_like(force)
-
-            fmax = np.max(np.abs(force))
-
-            if fmax < f_tol:
-                break
-
-            self.v += dt * force
-
-            P = np.dot(force, self.v)
-            v_norm = np.linalg.norm(self.v)
-            f_norm = np.linalg.norm(force)
-            if f_norm > 1e-20 and v_norm > 1e-20:
-                self.v = (1 - alpha) * self.v + alpha * force * (v_norm / f_norm)
-
-            if P > 0:
-                n_pos += 1
-                if n_pos > N_min:
-                    dt = min(dt * f_inc, dt_max)
-                    alpha *= alpha_dec
-            else:
-                self.v[:] = 0
-                dt *= f_dec
-                alpha = self.alpha
-                n_pos = 0
-
-            # Apply velocity damping to reduce momentum buildup
-            self.v *= velocity_damping
-
-            # Proposed step
-            step_vec = dt * self.v
-
-            # Clip step size to max_step_size
-            step_norm = np.linalg.norm(step_vec)
-            if max_step_size is not None and step_norm > max_step_size:
-                step_vec = step_vec / step_norm * max_step_size
-
-            x = x + step_vec
-
-        converged = (fmax < f_tol)
-
-        # Compute BFGS inverse Hessian using full trajectory (like SciPy does)
-        hess_inv = None
-        if len(self.trajectory) >= 2:
-            try:
-                hess_inv = bfgs_inverse_hessian(self.trajectory, self.biased_forces)
-            except Exception as e:
-                print(f"Warning: Could not compute BFGS inverse Hessian: {e}")
-                hess_inv = None
-
-        return {
-            'x': x,
-            'energy': energy,
-            'converged': converged,
-            'nsteps': step + 1,
-            'hess_inv': hess_inv
-        }
-
-    def _accepted_steps(self):
-        return self.accepted_positions.copy()

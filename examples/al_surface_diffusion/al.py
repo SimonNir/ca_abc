@@ -3,10 +3,10 @@ from ase import Atoms
 from ase.build import fcc100, add_adsorbate
 from ase.calculators.eam import EAM
 from ase.constraints import FixAtoms
-from ca_abc.potentials import ASESubsetPES
+from ca_abc.potentials import ASEPotential
 from ca_abc.optimizers import FIREOptimizer, ASEOptimizer, ScipyOptimizer
 
-class AlSurfaceDiffusion(ASESubsetPES):
+class AlSurfaceDiffusion(ASEPotential):
     """
     Al adatom diffusion on Al(100) surface using EAM potential.
     This system recreates the benchmark from Kushima et al. 2009.
@@ -175,12 +175,12 @@ def run_al_benchmark():
         
         # Perturbation parameters - smaller for metal surfaces
         perturb_type="fixed",
-        default_perturbation_size=0.01,  # Angstroms
+        default_perturbation_size=0.05,  # Angstroms
         scale_perturb_by_curvature=True,
         
         # Bias parameters - tuned for Al surface barriers (~0.23 eV)
         bias_height_type="fixed", 
-        default_bias_height=0.005,  # eV
+        default_bias_height=0.05,  # eV
         
         # Covariance - based on Al lattice parameter (~4.05 Å)
         bias_covariance_type="fixed",
@@ -192,7 +192,7 @@ def run_al_benchmark():
         
         # Convergence criteria
         max_descent_steps=10000,
-        descent_convergence_threshold=1e-3,  # eV/Å
+        descent_convergence_threshold=5e-3,  # eV/Å
         struc_uniqueness_rmsd_threshold=0.1,  # Å
         energy_diff_threshold=0.01,  # eV
 
@@ -200,14 +200,17 @@ def run_al_benchmark():
     )
 
     # Run the simulation
-    # optimizer = ASEOptimizer(abc, optimizer_class='BFGS')
+    # optimizer = ASEOptimizer(abc, optimizer_class='BFGS', 
+                            #  max_step_size=0.1,
+                            #  )
     # optimizer = ScipyOptimizer(abc, method='BFGS')
-    optimizer = FIREOptimizer(abc, dt=0.05, max_step_size=None)
+    optimizer = FIREOptimizer(abc, max_step_size=None)
     abc.run(
         optimizer=optimizer,
         max_iterations=300,
         verbose=True,
-        stopping_minima_number=3  # Stop after finding 2 distinct minima
+        stopping_minima_number=3,  # Stop after finding 2 distinct minima
+        verbose_opt=True,
     )
 
     from ca_abc.analysis import ABCAnalysis
@@ -220,13 +223,15 @@ if __name__ == "__main__":
     abc, system = run_al_benchmark()
     print("\nAl surface diffusion benchmark completed!")
 
+    # print("Biases:", abc.bias_list)
+
     from ase.io import write
 
     # Save visited minima to a trajectory file
     template = system.atoms
     minima_structures = []
     for i, x in enumerate(abc.minima):
-        idx = abc.minima_indices[i]
+        idx = abc.min_indices[i]
         energy = abc.unbiased_energies[idx]
         atoms = template.copy()
         atoms.set_positions(system._reconstruct_full_position(x))
@@ -252,8 +257,7 @@ if __name__ == "__main__":
     # Save full trajectory with energies
     structures = []
     for i, x in enumerate(abc.trajectory):
-        idx = abc.traj_indices[i]
-        energy = abc.unbiased_energies[idx]
+        energy = abc.unbiased_energies[i]
         atoms = template.copy()
         atoms.set_positions(system._reconstruct_full_position(x))
         atoms.info['energy'] = energy

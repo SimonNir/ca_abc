@@ -2,52 +2,53 @@ import numpy as np
 
 class GaussianBias:
     """
-    N-dimensional Gaussian bias potential:
-    
-    V(x) = -height * exp( -0.5 * (x - center)^T @ cov_inv @ (x - center) )
-    
+    N-dimensional Gaussian bias potential. Can be defined over a full space
+    or a specific subspace of degrees of freedom.
+
+    V(x) = height * exp( -0.5 * (x_sub - center_sub)^T @ cov_inv_sub @ (x_sub - center_sub) )
+
     Parameters:
     -----------
-    center : ndarray, shape (d,)
-        Center of the Gaussian.
-    covariance : ndarray, shape (d, d) or float
-        Covariance matrix of the Gaussian (must be positive definite) or scalar for isotropic Gaussian.
+    center : ndarray, shape (d_full,)
+        Center of the Gaussian in the full coordinate space.
+    covariance : ndarray, shape (d_sub, d_sub) or float
+        Covariance matrix of the Gaussian. If dof_indices is specified, this
+        is the reduced covariance for that subspace.
     height : float
         Height (amplitude) of the Gaussian bias.
+    dof_indices : list or ndarray, optional
+        The indices of the degrees of freedom this bias applies to. If None,
+        the bias is assumed to apply to all degrees of freedom.
     """
-    
-    def __init__(self, center, covariance, height):
+
+    def __init__(self, center, covariance, height, dof_indices=None):
         self.center = np.atleast_1d(center)
         self.height = height
+        self.dof_indices = dof_indices
         
+        # The stored covariance is always the (potentially reduced) matrix
         if np.isscalar(covariance):
-            self.covariance = np.eye(len(center)) * covariance
+            dim = len(dof_indices) if dof_indices is not None else len(center)
+            self.covariance = np.eye(dim) * covariance
         else:
             self.covariance = np.atleast_2d(covariance)
-        
+
+        # Dimension validation
+        expected_dim = len(self.dof_indices) if self.dof_indices is not None else len(self.center)
+        if self.covariance.shape[0] != expected_dim:
+            raise ValueError(f"Covariance dimension ({self.covariance.shape[0]}) does not match "
+                             f"expected dimension ({expected_dim}) based on dof_indices.")
+
         if self.covariance.shape[0] != self.covariance.shape[1]:
             raise ValueError(f"Covariance matrix must be square. Currently:\n{self.covariance}")
-        if self.covariance.shape[0] != self.center.shape[0]:
-            raise ValueError("Covariance matrix dimension must match center dimension")
-        
-        # Check positive definiteness by Cholesky (raises if not PD)
+
+        # Pre-compute the inverse of the (reduced) covariance matrix
         try:
-            self._cholesky = np.linalg.cholesky(self.covariance)
+            # Check for positive definiteness and compute inverse
+            np.linalg.cholesky(self.covariance)
+            self._cov_inv = np.linalg.inv(self.covariance)
         except np.linalg.LinAlgError:
             raise ValueError("Covariance matrix must be positive definite")
-        
-        # Compute inverse
-        self._cov_inv = np.linalg.inv(self.covariance)
-        
-        # Compute determinant from Cholesky factor: det = (prod(diag(L)))^2
-        diag_L = np.diag(self._cholesky)
-        log_det = 2.0 * np.sum(np.log(diag_L))
-        self._det_cov = np.clip(np.exp(log_det), 1e-100, 1e100)  # will be 0 if underflow, but no exception raised here
-
-        if not np.isfinite(log_det) or log_det == -np.inf:
-            raise ValueError("Covariance matrix determinant log is invalid, matrix may be singular or ill-conditioned")
-
-
     
     def potential(self, position):
         """
@@ -104,4 +105,5 @@ class GaussianBias:
         return self._cholesky
     
     def __repr__(self):
-        return (f"GaussianBias(center={self.center}, covariance=\n{self.covariance}, height={self.height})")
+        return (f"GaussianBias(height={self.height}, dof_indices={self.dof_indices}, "
+                f"covariance=\n{self.covariance}, \ncenter=\n{self.center})")

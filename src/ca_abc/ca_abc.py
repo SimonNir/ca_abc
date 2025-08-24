@@ -26,10 +26,13 @@ class CurvatureAdaptiveABC:
         dump_folder = "abc_data_dumps", 
 
         # Curvature estimation
-        curvature_method="bfgs", # 'finite_diff', 'lanczos', or 'bfgs'
+        curvature_method="bfgs", # 'finite_diff', 'bfgs', or 'lanczos' (experimental)
         
         # Perturbation strategy
-        perturb_type="adaptive",  # None - Kushima et al. style deterministic exploration; # random - random perturbation, allowing parallel exploration; "adaptive" - curvature-adaptive
+        perturb_type="adaptive",  # None - Kushima et al. style deterministic exploration; no perturbation
+        # "adaptive" - deterministic softmode perturbation
+        # "stochastic" - random perturbation, allowing parallel exploration
+        # "adaptive_stochastic" - randomized softmode perturbation (randomly selects +v or -v for softest mode v)
         scale_perturb_by_curvature=True,
         default_perturbation_size=0.05,
         min_perturbation_size = None, 
@@ -61,6 +64,7 @@ class CurvatureAdaptiveABC:
         
         # Descent and optimization
         descent_convergence_threshold=1e-4,
+        min_descent_steps=5,
         max_descent_steps=600,
         max_acceptable_force_mag = 1e99, # in practice, the optimizers actually do best with uncapped max force
 
@@ -107,14 +111,12 @@ class CurvatureAdaptiveABC:
 
         
         self.bias_covariance_type = bias_covariance_type
-        if np.isscalar(default_bias_covariance): 
-            default_bias_covariance = np.eye(self.dimension) * default_bias_covariance
-        self.default_bias_covariance = np.atleast_2d(default_bias_covariance)
+        self.default_bias_covariance = default_bias_covariance
         if min_bias_covariance is None:
-            min_bias_covariance = np.min(np.diag(self.default_bias_covariance))
+            min_bias_covariance = self.default_bias_covariance if np.isscalar(self.default_bias_covariance) else np.min(np.diag(self.default_bias_covariance))
         self.min_bias_covariance = min_bias_covariance
         if max_bias_covariance is None:
-            max_bias_covariance = np.max(np.diag(self.default_bias_covariance))
+            max_bias_covariance = self.default_bias_covariance if np.isscalar(self.default_bias_covariance) else np.max(np.diag(self.default_bias_covariance))
         self.max_bias_covariance = max_bias_covariance
         self.curvature_bias_covariance_scale = curvature_bias_covariance_scale # only used if ema scaling is false 
 
@@ -132,6 +134,9 @@ class CurvatureAdaptiveABC:
         self.bias_filtering_cutoff = bias_filtering_cutoff
         
         self.descent_convergence_threshold = descent_convergence_threshold
+        self.min_descent_steps = min_descent_steps
+        if (self.perturb_type is None or self.perturb_type == "None") and self.min_descent_steps is None:
+            print('Warning: You have chosen no perturbation but also not specified a min_descent_steps; \nthis may result in overbiasing.Consider setting min_descent_steps > 0.') 
         self.max_descent_steps = max_descent_steps
         self.max_acceptable_force_mag = max_acceptable_force_mag
         self.potential.max_acceptable_force_mag = max_acceptable_force_mag
@@ -142,9 +147,17 @@ class CurvatureAdaptiveABC:
             self.curvature_method = "bfgs"
 
         self.biased_atom_indices = biased_atom_indices
+         # Construct the DOF indices once and store them as an attribute.
+        if self.biased_atom_indices is not None:
+            dof_indices = []
+            for i in self.biased_atom_indices:
+                dof_indices.extend([3 * i, 3 * i + 1, 3 * i + 2])
+            self.dof_indices = np.array(dof_indices)
+        else:
+            self.dof_indices = None # Signal that biases are full-dimensional
 
 
-    def reset(self, starting_position=None, clean_dir=False):
+    def reset(self, starting_position=None):
         """Reset the sampler to initial state."""
         if starting_position is None:
             self.position = self.potential.default_starting_position()
@@ -171,7 +184,7 @@ class CurvatureAdaptiveABC:
         self.energy_calls_at_each_min = []
         self.force_calls_at_each_min = []
    
-    def store_to_disk(self):
+    def store_to_disk(self, remove_prior = False):
         """Store relevant data to disk using pickle."""
 
         if not os.path.exists(self.dump_folder):
@@ -192,8 +205,18 @@ class CurvatureAdaptiveABC:
             pickle.dump(data, f)
         print(f"Data stored to {filename}")
 
+        old_iter = self.current_iteration - self.dump_every
+        if remove_prior and old_iter >= 0:
+            old_name = os.path.join(self.dump_folder, f"abc_dump_iter_{old_iter}.pkl")
+            if os.path.exists(old_name):
+                try:
+                    os.remove(old_name)
+                    print(f"Deleted previous dump at {old_name}.")
+                except OSError as e:
+                    print(f"Warning: could not delete {old_name}: {e}")
+
     @classmethod
-    def load_from_disk(cls, *args, folder_path="abc_data_dumps", **kwargs):
+    def load_from_disk(cls, *args, folder_path="abc_data_dumps", minimal=True, **kwargs):
         """Loads ABC instance from disk. Passes ABC creation args and kwargs to __init__."""
 
         # Find the latest dump file
@@ -207,16 +230,21 @@ class CurvatureAdaptiveABC:
 
         abc = cls(*args, **kwargs)
         abc.bias_list = data['bias_list']
-        abc.unbiased_energies = data['unbiased_energies']
-        abc.biased_energies = data['biased_energies']
-        abc.unbiased_forces = data['unbiased_forces']
-        abc.biased_forces = data['biased_forces']
-        abc.trajectory = data['trajectory']
-        abc.energy_calls_at_each_min = data['energy_calls_at_each_min']
-        abc.force_calls_at_each_min = data['force_calls_at_each_min']
+        if not minimal:
+            abc.unbiased_energies = data['unbiased_energies']
+            abc.biased_energies = data['biased_energies']
+            abc.unbiased_forces = data['unbiased_forces']
+            abc.biased_forces = data['biased_forces']
+            abc.trajectory = data['trajectory']
+            abc.energy_calls_at_each_min = data['energy_calls_at_each_min']
+            abc.force_calls_at_each_min = data['force_calls_at_each_min']
         abc.current_iteration = latest_iter
-        abc.position = abc.trajectory[-1].copy()
+        abc.position = data['trajectory'][-1].copy()
         print(f"Loaded ABC state from {latest_file}")
+        if minimal:
+            print("Used minimal loading: \nyou will need to load and analyze each .pkl separately, " \
+            "as the bias list is the only carry-over into local memory.\nMake sure remove_prior=False "
+            "in future calls to store_to_disk.")
         return abc
 
     def update_records(self):
@@ -231,7 +259,10 @@ class CurvatureAdaptiveABC:
     # Core functionality (adapted from TraditionalABC with enhancements)
 
     def update_bias_cache(self):
-        """Call this to rebuild cached vectorized arrays when bias_list changes."""
+        """
+        Call this to rebuild cached vectorized arrays when bias_list changes.
+        Reconstructs full inverse covariance matrices from reduced ones if necessary.
+        """
         if not self.bias_list:
             self._bias_centers = np.empty((0, self.position.size))
             self._bias_heights = np.array([])
@@ -239,8 +270,22 @@ class CurvatureAdaptiveABC:
         else:
             self._bias_centers = np.array([b.center for b in self.bias_list])
             self._bias_heights = np.array([b.height for b in self.bias_list])
-            self._bias_inv_covs = np.stack([b._cov_inv for b in self.bias_list])
-        self._bias_cache_valid = True
+            
+            # Reconstruct full inverse covariance matrices for the vectorized calculation
+            inv_covs_list = []
+            for b in self.bias_list:
+                if b.dof_indices is None:
+                    # This is a full-dimensional bias
+                    inv_covs_list.append(b._cov_inv)
+                else:
+                    # This is a reduced bias; build the full sparse matrix
+                    full_inv_cov = np.zeros((self.dimension, self.dimension))
+                    full_inv_cov[np.ix_(b.dof_indices, b.dof_indices)] = b._cov_inv
+                    inv_covs_list.append(full_inv_cov)
+            
+            self._bias_inv_covs = np.stack(inv_covs_list)
+            
+        self._bias_cache_valid = True 
 
     def compute_biased_potential(self, position, unbiased: float = None) -> float:
         V = self.potential.potential(position) if unbiased is None else unbiased
@@ -493,20 +538,13 @@ class CurvatureAdaptiveABC:
 
     def deposit_bias(self, center: np.ndarray = None, covariance: float | np.ndarray = None, height: float = None, verbose=False):
         pos = center if center is not None else self.position.copy()
-
-        # Create a list of the full DOF indices to bias
-        if hasattr(self, 'biased_atom_indices') and self.biased_atom_indices is not None:
-            dof_indices = []
-            for i in self.biased_atom_indices:
-                dof_indices.extend([3 * i, 3 * i + 1, 3 * i + 2])
-        else:
-            dof_indices = list(range(self.dimension))
+        dof_indices = self.dof_indices
 
         # --- Extract sub-Hessian ---
-        if self.most_recent_hessian is not None:
+        if self.most_recent_hessian is not None and dof_indices is not None:
             sub_hessian = self.most_recent_hessian[np.ix_(dof_indices, dof_indices)]
         else:
-            sub_hessian = None
+            sub_hessian = self.most_recent_hessian
 
         # --- Determine Bias Height ---
         if height is not None:
@@ -535,25 +573,52 @@ class CurvatureAdaptiveABC:
             print("Clipped height:", clipped_h)
 
         # --- Construct Reduced Covariance ---
+        reduced_dim = len(dof_indices) if dof_indices is not None else self.dimension   
         if covariance is not None:
-            reduced_cov = covariance[np.ix_(dof_indices, dof_indices)] if not np.isscalar(covariance) else np.eye(len(dof_indices)) * covariance
+            reduced_cov = covariance if not np.isscalar(covariance) else np.eye(reduced_dim) * covariance
         else:
             if self.bias_covariance_type == "adaptive" and sub_hessian is not None:
                 reduced_cov = np.linalg.inv(sub_hessian)
             else:
                 if np.isscalar(self.default_bias_covariance):
-                    reduced_cov = np.eye(len(dof_indices)) * self.default_bias_covariance
+                    reduced_cov = np.eye(reduced_dim) * self.default_bias_covariance
                 else:
-                    reduced_cov = self.default_bias_covariance[np.ix_(dof_indices, dof_indices)]
+                    reduced_cov = self.default_bias_covariance[np.ix_(dof_indices, dof_indices)] if reduced_dim != len(self.default_bias_covariance) else self.default_bias_covariance
 
         # --- Eigendecompose and Clip in Subspace ---
         eigvals, eigvecs = np.linalg.eigh(np.atleast_2d(reduced_cov))
 
         if self.bias_covariance_type == "adaptive":
             if self.use_ema_adaptive_scaling and sub_hessian is not None:
-                # You may insert additional EMA logic here if desired
-                pass
-            var_along_modes = clipped_h * self.curvature_bias_covariance_scale * eigvals
+                proposed_vars = clipped_h * eigvals
+
+                log_mean_var = np.mean(np.log(proposed_vars))
+
+                if self.log_running_variance_ema is None:
+                    self.log_running_variance_ema = log_mean_var
+                else:
+                    self.log_running_variance_ema = (
+                        self.ema_alpha * log_mean_var +
+                        (1 - self.ema_alpha) * self.log_running_variance_ema
+                    )
+
+                min_variance = self.min_bias_covariance
+                max_variance = self.max_bias_covariance 
+                log_target_var = 0.5 * (np.log(min_variance) + np.log(max_variance))
+
+                log_delta = log_target_var - self.log_running_variance_ema
+                delta = np.exp(log_delta)
+                if self.conservative_ema_delta:
+                    delta = np.clip(delta, 0.1, 1) # prevent overbiasing by keeping delta <= 1
+                
+                var_along_modes = delta * proposed_vars
+
+                if verbose:
+                    print("EMA log variance:", self.log_running_variance_ema)
+                    print("Target log variance:", log_target_var)
+                    print("Dynamic delta_cov:", delta)
+            else:
+                var_along_modes =  clipped_h * self.curvature_bias_covariance_scale * eigvals
         else:
             var_along_modes = eigvals
 
@@ -564,46 +629,31 @@ class CurvatureAdaptiveABC:
             print("Clipped var:", clipped_eigvals)
 
         clipped_cov_reduced = eigvecs @ np.diag(clipped_eigvals) @ eigvecs.T
-        clipped_cov_reduced = 0.5 * (clipped_cov_reduced + clipped_cov_reduced.T)
-
-        # --- Embed into Full Covariance Matrix ---
-        large_variance = 1e4  # or even 1e10
-        clipped_cov_full = np.eye(self.dimension) * large_variance
-        clipped_cov_full[np.ix_(dof_indices, dof_indices)] = clipped_cov_reduced
-
-
-        # --- Final Sanity Checks ---
-        try:
-            assert clipped_cov_full.shape == (self.dimension, self.dimension), "Final covariance matrix not full-dimensional"
-            assert np.allclose(clipped_cov_full, clipped_cov_full.T), "Not symmetric"
-        except AssertionError as e:
-            print("Error:", e)
-            print("Covariance matrix that caused error:\n", clipped_cov_full)
-            sys.exit(1)
+        clipped_cov_reduced = np.atleast_2d(0.5 * (clipped_cov_reduced + clipped_cov_reduced.T))
 
         # --- Create and Store Bias ---
-        bias = GaussianBias(center=pos, covariance=clipped_cov_full, height=clipped_h)
+        # The bias object now stores the reduced covariance and the indices
+        bias = GaussianBias(center=pos, 
+                            covariance=clipped_cov_reduced, 
+                            height=clipped_h,
+                            dof_indices=dof_indices)
         self.bias_list.append(bias)
-        self.update_bias_cache()
+        self._bias_cache_valid = False # Invalidate the cache
 
 
-        # if verbose and self.bias_covariance_type.lower() == "adaptive":
-        #     approx_vol = np.sqrt(np.pow(2*np.pi, n)*np.linalg.det(clipped_cov))
-        #     print("Approximate bias volume:", approx_vol)
-
-
-    def descend(self, max_steps=None, convergence_threshold=None, verbose=False):
+    def descend(self, verbose=False):
         """
         Efficient descent with built-in state recording that avoids callbacks.
         All force and energy calculations are done exactly once per step.
         """
-        max_steps = max_steps or self.max_descent_steps
-        convergence_threshold = convergence_threshold or self.descent_convergence_threshold
+        max_steps = self.max_descent_steps
+        min_steps= self.min_descent_steps
+        convergence_threshold = self.descent_convergence_threshold
         
-        max_attempts = 10
+        max_attempts = 5
         attempt = 0
         while attempt == 0 or attempt < max_attempts and message == "Desired error not necessarily achieved due to precision loss.": 
-            result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold, verbose=verbose)
+            result, traj_data = self.optimizer.descend(self.position, max_steps=max_steps, convergence_threshold=convergence_threshold, min_steps=min_steps, verbose=verbose)
             final_pos = result['x']
             converged = result['converged']
             hess_inv = result['hess_inv'] if 'hess_inv' in result else None
@@ -623,8 +673,6 @@ class CurvatureAdaptiveABC:
                 message = result['message']
             else: 
                 message = None
-            # print('attempt:', attempt)
-            # print('force:', self.biased_forces[-1])
             attempt += 1 
         
         if not converged:
@@ -632,12 +680,6 @@ class CurvatureAdaptiveABC:
                     print(result['message'])
         
         self._process_curvature_info(final_pos, hess_inv)
-
-        # For debug purposes:
-        # from optimizers import bfgs_inverse_hessian
-        # print("Full-traj hessian_inv:", hess_inv)
-        # print("Finite-diff hessian_inv:", np.linalg.inv(self.compute_hessian_finite_difference(final_pos)))
-        # print("Accepted only hessian_inv:", bfgs_inverse_hessian(traj, biased_f))
 
         self._check_minimum(converged, final_pos)
 
@@ -839,7 +881,7 @@ class CurvatureAdaptiveABC:
             for iteration in range(self.current_iteration, max_iterations):
                 
                 if ignore_max_steps_on_initial_minimization and iteration == 0: 
-                    converged = self.descend(max_steps=self.max_descent_steps*100, verbose=verbose_opt)
+                    converged = self.descend(verbose=verbose_opt)
                 else: 
                     converged = self.descend(verbose=verbose_opt)
 
@@ -881,11 +923,6 @@ class CurvatureAdaptiveABC:
             for i, min_pos in enumerate(self.minima):
                 idx = np.argmin(np.linalg.norm(np.array(self.trajectory) - np.array(min_pos), axis=1))
                 output.append(f"Minimum {i+1}: Position = {min_pos}, Energy = {self.unbiased_energies[idx]}")
-
-        # 2. Report any on-the-fly saddle points
-        # DEPRECATED
-        # if self.saddles: 
-            # output.append(f"\nOn-the-fly-identified saddle-points: {self.saddles}")
 
         # 3. Approximate saddle points between minima
         if len(self.minima) > 1:

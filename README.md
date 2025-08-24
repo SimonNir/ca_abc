@@ -2,27 +2,30 @@
 
 A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of pathways along rugged potential energy surfaces (PES) without CVs or endpoint information.
 This is also the only known Python Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use for any chemistry, physics, or materials simulations your heart desires!
+
 Note that this repo, especially the examples, is a work in progress. Many new features, improvements, examples, and analysis tools are actively in development. 
+A preprint is expected in the next few months.
 
 ## Key Features
 
+- **On-the-fly Discovery**: Combines minima discovery and transition state identification in a single workflow
 - **Curvature-adaptive biasing**: Uses BFGS-derived Hessian information to shape anisotropic bias potentials
 - **Soft-mode perturbations**: Guides escapes along low-curvature directions for efficient basin transitions
-- **On-the-fly Discovery**: Combines minima discovery and transition state identification in a single workflow
+- **Deterministic or Stochastic**: Choose between deterministic trajectories or randomized perturbations (either 
+purely random or along +v or -v for softest mode v)
 - **ASE integration**: Works seamlessly with Atomic Simulation Environment for atomistic simulations
 - **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features and allowed ranges
-
+- **Selective Biasing**: Easily restrict biasing to specific atoms or degrees of freedom, 'activating' them specifically to encourage local transitions
+- **Minima Hopping**: Use a large random perturbation to essentially recreate traditional minima hopping; optionally use larger biases to prevent revisits
 ---
 
 ## Installation
 
 ```bash
-pip install -r requirements.txt 
 git clone https://github.com/SimonNir/ca_abc.git
 cd ca_abc
 pip install -e .
 ```
-
 
 **Dependencies:**
 
@@ -44,10 +47,11 @@ from potentials import StandardMullerBrown2D
 potential = StandardMullerBrown2D()
 abc = CurvatureAdaptiveABC(potential)
 
-# Run the simulation
+# Run the simulation (uses FIRE Optimizer by default)
 abc.run(max_iterations=100)
 
-# Access results
+# A detailed summary is printed by default, but specific results can be accessed 
+# with e.g. 
 print("Found minima:", abc.minima)
 print("Approximate saddles:", abc.saddles)
 ```
@@ -140,9 +144,14 @@ abc.run(max_iterations=200, stopping_minima_number=5)
 
 ## Citation
 
-If you use **CA-ABC** in your research, we kindly ask that you cite the following work:
+If you use **CA-ABC** in your research, we kindly ask that you attribute the source (for now) as:
 
-Nirenberg, S., Ding, L., & Do, C. (2025). *Curvature-Adaptive Autonomous Basin Climbing: Robust On-The-Fly Pathway Sampling for Rugged Energy Landscapes*. *[Journal Name]*.
+Nirenberg, S., Ding, L., & Do, C. *Curvature-Adaptive Autonomous Basin Climbing*. github.com/SimonNir/ca_abc 
+
+
+<!-- cite the following work:
+
+Nirenberg, S., Ding, L., & Do, C. (TBD). *Curvature-Adaptive Autonomous Basin Climbing: Robust On-The-Fly Pathway Sampling for Rugged Energy Landscapes*. *[Journal Name]*. -->
 
 -----
 
@@ -157,9 +166,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 Full API documentation is available in the code docstrings. Key classes:
 
   * `CurvatureAdaptiveABC`: Main simulation class
-  * `GaussianBias`: Implements anisotropic bias potentials
   * `ABCAnalysis`: Visualization and analysis tools
-
+  * `Potential`: Defines a generic PES
+  * `ASEPotential`: Defines a PES from ASE Atoms; automatically excludes fixed atoms 
+  * `CanonicalASEPotential`: Defines an ASEPotential in a canonical frame (3N-6 DOF); 
+  automatically handles derivative transforms 
+  * `Optimizer`: Defines a generic Optimizer 
 -----
 
 ## Contributing
@@ -170,8 +182,9 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
 
 ## Known Issues
 
-  * BFGS Hessian approximation degrades in extremely high dimensions (\>300D); Lanczos or Rayleigh methods (to be incorporated in future work) likely become preferable
-  * ASE interface may require configuration for some calculators
+  * BFGS Hessian approximation degrades in high dimensions (\>300D); Lanczos method likely becomes preferable.
+  * For extremely high-dimensional problems (\>1000D), bias storage may become memory-intensive; it is recommended to restrict biasing to particular atoms and dump trajectory often, to decrease storage needs 
+  * ASE interface may require additional configuration for some calculators
   * dynamic deltas >> 1 often perform far better than when restricted to the expected (0,1] domain; this might be due to the imperfection of the BFGS hessian or anhamonicity of the landscapes
 
 -----
@@ -179,12 +192,12 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
 ## Future Directions
 
   * Incorporate a 'deterministic mode', mimicking Kushima et al's original strategy more exactly
+  * Setup deeper parallelization, with multiple different runs at different positions on the PES sharing a single bias list
   * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al.
   * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
   * (Machine) Learn bias covariance from descent information, allowing adaptiveness and flattening in anharmonic regions
   * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
   * Set up LAMMPS calculator (very easy in theory via ASE support)
-  * Setup deeper parallelization, with multiple different runs at different positions on the PES sharing a single bias list
 
 -----
 

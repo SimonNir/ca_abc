@@ -68,10 +68,18 @@ class Optimizer(ABC):
             'biased_forces': [self.biased_forces[i] for i in indices]
         }
 
-    def descend(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
+    def descend(self, x0, max_steps=None, convergence_threshold=None, min_steps=None, verbose=False):
         """Universal descent method (same for all backends)"""
         self._reset_state()
-        result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
+        if min_steps is not None and min_steps != 0:
+            if "min_steps" not in self._run_optimization.__code__.co_varnames:
+                print("Warning: selected optimizer has no min_steps option; proceeding with min_steps=0")
+                result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
+            else:
+                result = self._run_optimization(x0, max_steps, convergence_threshold,
+                                                min_steps=min_steps, verbose=verbose)
+        else:
+            result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
           # Only compute fallback if optimizer did NOT already provide a Hessian
         if result.get('hess_inv', None) is None and self.abc_sim.curvature_method.lower() == 'adaptive':
             result['hess_inv'] = self.hess_inv
@@ -156,9 +164,9 @@ def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
     return updater.get_matrix()
 
 class FIREOptimizer(Optimizer):
-    def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
+    def __init__(self, abc_sim, dt=0.05, alpha=0.1, dt_max=0.1, N_min=5,
                  f_inc=1.05, f_dec=0.5, alpha_dec=0.95, max_steps=1000,
-                 f_tol=1e-4, max_step_size=0.05, velocity_damping=0.9):
+                 f_tol=1e-4, max_step_size=None, velocity_damping=0.9):
         """
         - Smaller dt and dt_max for cautious steps
         - Added max_step_size to clip max displacement per step
@@ -389,7 +397,7 @@ class ScipyOptimizer(Optimizer):
         
         raise AttributeError(f"Inverse Hessian not available for method '{self.method}'")
 
-from ca_abc.potentials import ASEPotentialEnergySurface
+from ca_abc.potentials import ASEPotential
 from ase.optimize import BFGS as aBFGS
 from ase.optimize import LBFGS, FIRE, GPMin, BFGSLineSearch, MDMin
 
@@ -412,7 +420,7 @@ class ASEOptimizer(Optimizer):
         self.convergence_threshold = convergence_threshold
 
         # Handle both regular and canonical PES cases
-        if isinstance(self.abc_sim.potential, ASEPotentialEnergySurface):
+        if isinstance(self.abc_sim.potential, ASEPotential):
             if hasattr(self.abc_sim.potential, "free_atoms"):
                 atoms = self.abc_sim.potential.free_atoms
             else:

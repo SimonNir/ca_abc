@@ -1,11 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 
-###############################
-# Base Potential Class (Abstract)
-###############################
-
-class PotentialEnergySurface(ABC):
+class Potential(ABC):
     """Abstract base class for potential energy surfaces."""
 
     def __init__(self): 
@@ -77,12 +73,7 @@ class PotentialEnergySurface(ABC):
         """Return known saddles (for analysis)."""
         return None
 
-
-###############################
-# Concrete Potential Implementations
-###############################
-
-class DoubleWell1D(PotentialEnergySurface):
+class DoubleWell1D(Potential):
     """1D double well potential."""
     
     def _potential(self, x):
@@ -104,7 +95,7 @@ class DoubleWell1D(PotentialEnergySurface):
     def known_saddles(self):
         return [np.array([0.0], dtype=float)]
 
-class Complex1D(PotentialEnergySurface):
+class Complex1D(Potential):
     
     def _potential(self, x):
         a=[6.5, 4.2, -7.3, -125]
@@ -141,11 +132,7 @@ class Complex1D(PotentialEnergySurface):
                 ]
 
 
-import numpy as np
-
-import numpy as np
-
-class StandardMullerBrown2D(PotentialEnergySurface):
+class StandardMullerBrown2D(Potential):
     """2D Muller-Brown potential."""
 
     def __init__(self):
@@ -203,206 +190,107 @@ class StandardMullerBrown2D(PotentialEnergySurface):
             np.array([-0.8220015587, 0.6243128028])  # Transition B<-->C
         ]
 
-# --- Now, a concrete implementation using ASE ---
 from ase import Atoms
-from ase.calculators.lj import LennardJones
+from ase.constraints import FixAtoms
 
-class ASEPotentialEnergySurface(PotentialEnergySurface):
+class ASEPotential(Potential):
     """
-    A base class for PES implementations that use ASE calculators.
+    A Potential wrapper around ASE calculators.
+    Supports both full-atom optimization and free-atom-only optimization
+    (when ASE FixAtoms constraints are present).
     """
-    def __init__(self, ase_atoms, calculator):
+
+    def __init__(self, ase_atoms: Atoms, calculator=None):
         super().__init__()
         self.atoms = ase_atoms
-        if calculator is not None: 
+        if calculator is not None:
             self.atoms.calc = calculator
 
-    def _potential(self, position):
-        """Compute potential energy at given position using ASE."""
-        # Ensure 'position' is a numpy array of correct shape for ASE
-        # For N atoms, it should be (N, 3)
-        self.atoms.positions = position.reshape(-1, 3)
-        return self.atoms.get_potential_energy()
-
-    def _gradient(self, position):
-        """Compute gradient at given position using ASE."""
-        self.atoms.positions = position.reshape(-1, 3)
-        # ASE returns forces, which are negative gradients
-        forces = self.atoms.get_forces()
-        return -forces.flatten() # Flatten to match your 'position' input shape
-
-# DEPRECATED: USE CANONICAL
-# class LennardJonesCluster(ASEPotentialEnergySurface):
-#     def __init__(self, num_atoms, initial_positions=None,
-#                  sigma=1.0, epsilon=1.0, min_distance=0.9, padding=0.5,
-#                  barrier_strength=10.0):
-#         """
-#         Smarter Lennard-Jones cluster with optional boundary penalty.
-
-#         Args:
-#             num_atoms: Number of atoms
-#             initial_positions: Starting positions, or None to generate
-#             sigma: LJ σ parameter
-#             epsilon: LJ ε parameter
-#             min_distance: Minimum spacing between atoms (in σ units)
-#             padding: Box padding around typical cluster size (in σ units)
-#             barrier_strength: Strength of the soft wall boundary penalty
-#         """
-#         self.num_atoms = num_atoms
-#         self.sigma = sigma
-#         self.epsilon = epsilon
-#         self.min_distance = min_distance * sigma
-#         self.padding = padding * sigma
-#         self.barrier_strength = barrier_strength
-
-#         # Determine bounding box
-#         self.box_size = self._calculate_box_size()
-#         self.half_box = self.box_size / 2
-
-#         # Generate initial positions
-#         if initial_positions is None:
-#             initial_positions = self.default_starting_position()
-#         initial_positions = np.array(initial_positions).reshape(-1, 3)
-
-#         # Create atoms and assign calculator
-#         atoms = Atoms('X' * num_atoms, positions=initial_positions, pbc=False)
-#         atoms.calc = LennardJones(sigma=sigma, epsilon=epsilon, rc=300*sigma, smooth=False)
-
-#         super().__init__(atoms, None)
-
-#     def _calculate_box_size(self):
-#         """Estimate a reasonable box size based on density and padding."""
-#         volume_per_atom = (4 / 3) * np.pi * (self.min_distance / 2)**3
-#         total_volume = self.num_atoms * volume_per_atom
-#         linear_size = total_volume**(1 / 3)
-#         return linear_size + 2 * self.padding
-
-#     def default_starting_position(self):
-#         """Generate valid initial positions inside the bounding box."""
-#         positions = []
-#         attempts = 0
-#         positions = uniform_sphere_points(self.num_atoms)
-#         positions -= positions.mean(axis=0)  # Center cluster
-#         return positions.flatten()
-
-#     def _potential(self, position):
-#         """Compute potential energy at given position using ASE."""
-#         # Ensure 'position' is a numpy array of correct shape for ASE
-#         # For N atoms, it should be (N, 3)
-#         self.atoms.positions = position.reshape(-1, 3)
-#         return self.atoms.get_potential_energy() + self._boundary_penalty(position.reshape(-1, 3))
-
-#     def _gradient(self, position):
-#         """Compute gradient at given position using ASE."""
-#         self.atoms.positions = position.reshape(-1, 3)
-#         # ASE returns forces, which are negative gradients
-#         forces = self.atoms.get_forces() + self._boundary_penalty_gradient(position.reshape(-1, 3))
-#         return -forces.flatten() # Flatten to match your 'position' input shape
-
-#     def _boundary_penalty(self, positions):
-#         """Vectorized soft quartic wall potential to prevent atoms from escaping box."""
-#         # positions: (N, 3)
-#         over = np.abs(positions) - self.half_box
-#         mask = over > 0
-#         penalty = self.barrier_strength * np.sum(over[mask] ** 4)
-#         return penalty
-
-#     def _boundary_penalty_gradient(self, positions):
-#         """Vectorized gradient of the soft wall potential."""
-#         over = np.abs(positions) - self.half_box
-#         mask = over > 0
-#         grad = np.zeros_like(positions)
-#         # Only apply where mask is True
-#         grad[mask] = 4 * self.barrier_strength * (over[mask] ** 3) * np.sign(positions[mask])
-#         return grad
-
-#     def known_minima(self):
-#         """Return known configurations for testing small systems."""
-#         if self.num_atoms == 2:
-#             return [np.array([0, 0, 0, 0, 0, 1.12 * self.sigma])]
-#         elif self.num_atoms == 3:
-#             a = 1.12 * self.sigma
-#             return [np.array([
-#                 0, 0, 0,
-#                 0, 0.5 * a, 0.866 * a,
-#                 0, -0.5 * a, 0.866 * a
-#             ])]
-#         return []
-
-#     def known_saddles(self):
-#         return []
-
-
-from ase.constraints import FixAtoms
-import numpy as np
-
-class ASESubsetPES(ASEPotentialEnergySurface):
-    """
-    A version of ASEPotentialEnergySurface that only exposes movable atoms.
-    Fixed atoms (via ASE FixAtoms) are automatically ignored in input/output.
-    """
-    def __init__(self, ase_atoms, calculator):
-        super().__init__(ase_atoms, calculator)
-
-        # Identify fixed atoms via ASE constraints
+        # Handle FixAtoms constraints
         fixed_indices = set()
         for c in self.atoms.constraints:
             if isinstance(c, FixAtoms):
                 fixed_indices.update(c.index)
-        
+
         self.fixed_indices = sorted(fixed_indices)
         self.free_indices = sorted(set(range(len(self.atoms))) - set(self.fixed_indices))
 
         self.n_total = len(self.atoms)
         self.n_free = len(self.free_indices)
 
-        # Precompute index mappings
-        self.free_atom_mask = np.array([i in self.free_indices for i in range(self.n_total)], dtype=bool)
+        # Boolean mask for free atoms
+        self.free_atom_mask = np.array(
+            [i in self.free_indices for i in range(self.n_total)],
+            dtype=bool
+        )
 
     def _reconstruct_full_position(self, free_position: np.ndarray) -> np.ndarray:
         """
-        Takes a position vector (flattened) for only the free atoms and reconstructs
-        the full N x 3 array with fixed atoms inserted from the original ASE object.
+        Takes a free-atom position vector (flattened) and reconstructs
+        the full N x 3 array including fixed atoms.
         """
         full_positions = self.atoms.positions.copy()
         full_positions[self.free_atom_mask] = free_position.reshape(-1, 3)
         return full_positions
-    
-    @property
-    def free_atoms(self):
-        return self.atoms[self.free_indices]
 
     def _extract_free_gradient(self, full_gradient: np.ndarray) -> np.ndarray:
         """
-        Extracts flattened gradient vector only for the free atoms.
+        Extracts flattened gradient vector for free atoms only.
         """
         return full_gradient.reshape(-1, 3)[self.free_atom_mask].flatten()
 
-    def _potential(self, free_position: np.ndarray) -> float:
-        full_pos = self._reconstruct_full_position(free_position)
+    def _potential(self, position: np.ndarray) -> float:
+        """
+        Potential energy for either all atoms or free atoms.
+        """
+        if self.n_free < self.n_total:
+            # Only free atoms passed in
+            full_pos = self._reconstruct_full_position(position)
+        else:
+            # Full set of positions passed in
+            full_pos = position.reshape(-1, 3)
+
         self.atoms.positions = full_pos
         return self.atoms.get_potential_energy()
 
-    def _gradient(self, free_position: np.ndarray) -> np.ndarray:
-        full_pos = self._reconstruct_full_position(free_position)
+    def _gradient(self, position: np.ndarray) -> np.ndarray:
+        """
+        Gradient for either all atoms or free atoms.
+        """
+        if self.n_free < self.n_total:
+            full_pos = self._reconstruct_full_position(position)
+        else:
+            full_pos = position.reshape(-1, 3)
+
         self.atoms.positions = full_pos
         forces = self.atoms.get_forces()  # shape (N, 3)
         full_grad = -forces
-        return self._extract_free_gradient(full_grad)
+
+        if self.n_free < self.n_total:
+            return self._extract_free_gradient(full_grad)
+        else:
+            return full_grad.flatten()
 
     def default_starting_position(self) -> np.ndarray:
         """
-        Returns the initial guess vector (flattened) for free atoms only.
+        Returns initial guess vector (flattened).
+        If free atoms are specified, only those are returned.
+        Otherwise, all atoms are returned.
         """
-        return self.atoms.positions[self.free_atom_mask].flatten()
+        if self.n_free < self.n_total:
+            return self.atoms.positions[self.free_atom_mask].flatten()
+        else:
+            return self.atoms.positions.flatten()
 
+    @property
+    def free_atoms(self) -> Atoms:
+        """
+        Returns an Atoms object with only the free atoms.
+        """
+        return self.atoms[self.free_indices]
 
-import numpy as np
-from ase import Atoms
-from ase.calculators.lj import LennardJones
 
 # === Softplus and Derivatives ===
-import numpy as np
 from scipy.special import expit  # Stable sigmoid
 
 def softplus(x, k=10):
@@ -503,17 +391,6 @@ def cartesian_to_internal(pos, k=10):
 
     return x_internal
 
-# === Uniform Sphere Sampling and Canonical Alignment ===
-def uniform_sphere_points(n):
-    indices = np.arange(0, n) + 0.5
-    phi = np.arccos(1 - 2 * indices / n)
-    theta = np.pi * (1 + 5 ** 0.5) * indices
-    x = np.cos(theta) * np.sin(phi)
-    y = np.sin(theta) * np.sin(phi)
-    z = np.cos(phi)
-    return np.vstack((x, y, z)).T
-
-
 def align_to_canonical(points):
     """
     Perform canonical alignment of points in 3D space with all coordinates >= 0.
@@ -603,7 +480,7 @@ def align_to_canonical(points):
     
     return aligned_points
 
-class CanonicalASEPES(PotentialEnergySurface):
+class CanonicalASEPotential(Potential):
     def __init__(self, atoms, k_soft=10):
         super().__init__()
         self.atoms = atoms.copy()
@@ -720,7 +597,18 @@ class CanonicalASEPES(PotentialEnergySurface):
         return np.zeros(n_internal)
 
 # === Lennard-Jones Cluster in Canonical Frame ===
-class CanonicalLennardJonesCluster(CanonicalASEPES):
+
+def uniform_sphere_points(n):
+    indices = np.arange(0, n) + 0.5
+    phi = np.arccos(1 - 2 * indices / n)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
+    x = np.cos(theta) * np.sin(phi)
+    y = np.sin(theta) * np.sin(phi)
+    z = np.cos(phi)
+    return np.vstack((x, y, z)).T
+
+from ase.calculators.lj import LennardJones
+class CanonicalLennardJonesCluster(CanonicalASEPotential):
     def __init__(self, num_atoms, sigma=1.0, epsilon=1.0, rc=6.5, k_soft=10):
         self.num_atoms = num_atoms
         self.sigma = sigma

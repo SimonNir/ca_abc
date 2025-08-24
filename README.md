@@ -191,7 +191,6 @@ Contributions are welcome\! Please open an issue or pull request on GitHub. Feel
 
 ## Future Directions
 
-  * Incorporate a 'deterministic mode', mimicking Kushima et al's original strategy more exactly
   * Setup deeper parallelization, with multiple different runs at different positions on the PES sharing a single bias list
   * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al.
   * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support

@@ -204,7 +204,7 @@ def run_al_benchmark():
                             #  max_step_size=0.1,
                             #  )
     # optimizer = ScipyOptimizer(abc, method='BFGS')
-    optimizer = FIREOptimizer(abc, max_step_size=None)
+    optimizer = FIREOptimizer(abc, max_step_size=None, dt=0.05, dt_max=0.1)
     abc.run(
         optimizer=optimizer,
         max_iterations=300,

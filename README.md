@@ -1,211 +1,163 @@
 # Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)
 
-A Python implementation of the Curvature-Adaptive Autonomous Basin Climbing algorithm for efficient exploration of pathways along rugged potential energy surfaces (PES) without CVs or endpoint information.
-This is also the only known Python Autonomous Basin Climbing implementation currently in existence, to my knowledge. Please feel free to use for any chemistry, physics, or materials simulations your heart desires!
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://img.shields.io/pypi/v/ca-abc.svg?logo=pypi)](https://pypi.org/project/ca-abc/) <!-- Placeholder -->
 
-Note that this repo, especially the examples, is a work in progress. Many new features, improvements, examples, and analysis tools are actively in development. 
-A preprint is expected in the next few months.
+A Python implementation of the **Autonomous Basin Climbing (ABC)** algorithm for the efficient, on-the-fly exploration of complex potential energy surfaces (PES).
+
+This package is designed for discovering reaction pathways, transition states, and local minima in chemistry, physics, and materials science simulations without requiring predefined collective variables or reaction endpoints. To our knowledge, this is the only publicly available Python implementation of the ABC algorithm.
+
+
+
+---
 
 ## Key Features
 
-- **On-the-fly Discovery**: Combines minima discovery and transition state identification in a single workflow
-- **Curvature-adaptive biasing**: Uses BFGS-derived Hessian information to shape anisotropic bias potentials
-- **Soft-mode perturbations**: Guides escapes along low-curvature directions for efficient basin transitions
-- **Deterministic or Stochastic**: Choose between deterministic trajectories or randomized perturbations (either 
-purely random or along +v or -v for softest mode v)
-- **ASE integration**: Works seamlessly with Atomic Simulation Environment for atomistic simulations
-- **Adaptive parameter tuning**: Automatically adjusts bias parameters based on local PES features and allowed ranges
-- **Selective Biasing**: Easily restrict biasing to specific atoms or degrees of freedom, 'activating' them specifically to encourage local transitions
-- **Minima Hopping**: Use a large random perturbation to essentially recreate traditional minima hopping; optionally use larger biases to prevent revisits
+-   **Automated Discovery**: Combines minima discovery and transition state identification into a single, autonomous workflow.
+-   **Curvature-Adaptive Biasing**: Uses local Hessian information (from BFGS or other methods) to shape anisotropic Gaussian biases, effectively filling basins and encouraging escapes.
+-   **Intelligent Perturbations**: Guides escapes along soft-mode directions (low-curvature pathways) for physically meaningful transitions.
+-   **Flexible Exploration Modes**: Supports fully **deterministic**, **randomized-adaptive**, and **stochastic** exploration strategies.
+-   **ASE Integration**: Works seamlessly with the [Atomic Simulation Environment (ASE)](https://wiki.fysik.dtu.dk/ase/) for advanced atomistic simulations.
+-   **Subspace Biasing**: Easily restrict biasing and perturbations to specific atoms or degrees of freedom using `biased_atom_indices`.
+
 ---
 
 ## Installation
 
+First, clone the repository and navigate into the directory:
 ```bash
-git clone https://github.com/SimonNir/ca_abc.git
+git clone [https://github.com/SimonNir/ca-abc.git](https://github.com/SimonNir/ca-abc.git)
 cd ca_abc
+````
+
+Then, install the package in editable mode with its dependencies:
+
+```bash
 pip install -e .
 ```
 
-**Dependencies:**
+#### Dependencies
+
+This project requires:
 
   * Python 3.7+
   * NumPy
   * SciPy
-  * ASE (Atomic Simulation Environment)
-  * Matplotlib (for analysis)
+  * Atomic Simulation Environment (ASE)
+  * Matplotlib (for analysis tools)
 
 -----
 
-## Basic Usage
+## Quick Start
+
+Here's a simple example of finding the minima of a 2D Müller-Brown potential.
 
 ```python
 from ca_abc import CurvatureAdaptiveABC
-from potentials import StandardMullerBrown2D
+from ca_abc.potentials import StandardMullerBrown2D
 
-# Initialize with your potential
+# 1. Initialize the potential
 potential = StandardMullerBrown2D()
-abc = CurvatureAdaptiveABC(potential)
 
-# Run the simulation (uses FIRE Optimizer by default)
+# 2. Configure and run the ABC simulation
+abc = CurvatureAdaptiveABC(potential)
 abc.run(max_iterations=100)
 
-# A detailed summary is printed by default, but specific results can be accessed 
-# with e.g. 
-print("Found minima:", abc.minima)
+# 3. Access the results
+# The run prints a live summary, but results are stored on the object.
+print("\n--- Simulation Results ---")
+print(f"Found {len(abc.minima)} unique minima.")
 print("Approximate saddles:", abc.saddles)
 ```
 
 -----
 
-## Configuration Options
+## Configuration
 
-Key parameters (see `ca_abc.py` for full list):
+CA-ABC is highly configurable. Key parameters can be passed during initialization. See the `CurvatureAdaptiveABC` docstring for a full list.
 
-**Perturbation:**
-
-  * `perturb_type`: "adaptive" (default) or "random"
-  * `default_perturbation_size`: Base step size (default 0.05)
-  * `scale_perturb_by_curvature`: Whether to scale steps by curvature (default True)
-
-**Biasing:**
-
-  * `bias_height_type`: "adaptive" (default) or "fixed"
-  * `default_bias_height`: Base bias height (default 1.0)
-  * `bias_covariance_type`: "adaptive" (default) or "isotropic"
-
-**Optimization:**
-
-  * `descent_convergence_threshold`: Force tolerance (default 1e-4)
-  * `max_descent_steps`: Maximum steps per descent (default 600)
-
------
-
-## Advanced Features
-
-### Custom Optimizers
-
-Use different optimizers by passing an optimizer instance:
-
-```python
-from optimizers import ASEOptimizer
-optimizer = ASEOptimizer(abc, optimizer_class='FIRE')
-abc.run(optimizer=optimizer)
-```
-
-### Canonical Coordinates
-
-For molecular systems, use the canonical coordinate system:
-
-```python
-from potentials import CanonicalLennardJonesCluster
-potential = CanonicalLennardJonesCluster(num_atoms=38)
-abc = CurvatureAdaptiveABC(potential)
-```
-
-### Analysis and Visualization
-
-Use the built-in analysis tools:
-
-```python
-from analysis import ABCAnalysis
-analyzer = ABCAnalysis(abc)
-analyzer.plot_summary()
-```
+| Parameter                       | Default      | Description                                                                                                                              |
+| ------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **General** |              |                                                                                                                                          |
+| `curvature_method`              | `"bfgs"`     | Method to estimate the Hessian: `"bfgs"`, `"finite_diff"`, `"lanczos"`.                                                                  |
+| `biased_atom_indices`           | `None`       | A list of atom indices to apply biases/perturbations to. If `None`, all atoms are used.                                                  |
+| **Perturbation** |              |                                                                                                                                          |
+| `perturb_type`                  | `"adaptive"` | `"adaptive"` (deterministic), `"adaptive_stochastic"`, `"stochastic"`, or `"none"`.                                                      |
+| `default_perturbation_size`     | `0.05`       | The base magnitude of the perturbation step.                                                                                             |
+| `min_perturbation_size`         | `None`       | The minimum allowed magnitude for an adaptive perturbation. Defaults to `default_perturbation_size`.                                     |
+| **Biasing (Height)** |              |                                                                                                                                          |
+| `bias_height_type`              | `"adaptive"` | `"adaptive"` (scales with curvature) or `"fixed"`.                                                                                       |
+| `default_bias_height`           | `1.0`        | The base height of the Gaussian bias potential.                                                                                          |
+| `min_bias_height`               | `None`       | The minimum allowed height for an adaptive bias. Defaults to `default_bias_height`.                                                      |
+| `max_bias_height`               | `None`       | The maximum allowed height for an adaptive bias. Defaults to `default_bias_height`.                                                      |
+| **Biasing (Covariance/Width)** |              |                                                                                                                                          |
+| `bias_covariance_type`          | `"adaptive"` | `"adaptive"` (uses inverse Hessian) or `"isotropic"` (spherical).                                                                        |
+| `default_bias_covariance`       | `1.0`        | The base variance (width) of the Gaussian bias.                                                                                          |
+| `min_bias_covariance`           | `None`       | The minimum allowed variance along any principal axis.                                                                                   |
+| `max_bias_covariance`           | `None`       | The maximum allowed variance along any principal axis.                                                                                   |
+| **Optimization** |              |                                                                                                                                          |
+| `descent_convergence_threshold` | `1e-4`       | The force tolerance (`fmax`) for the geometry optimizer to be considered converged.                                                      |
+| `min_descent_steps`             | `5`          | The optimizer will run for at least this many steps, even if the force tolerance is met.                                                 |
+| `max_descent_steps`             | `600`        | The maximum number of steps allowed for the optimizer in a single descent.                                                               |
 
 -----
 
-## Example Workflows
+## Documentation & API
 
-### Basic Exploration
+Full API documentation is available in the code docstrings.
 
-```python
-from ca_abc import CurvatureAdaptiveABC
-from potentials import DoubleWell1D
-
-abc = CurvatureAdaptiveABC(DoubleWell1D())
-abc.run(max_iterations=50)
-abc.summarize()
-```
-
-### LJ Cluster Exploration
-
-```python
-from potentials import LennardJonesCluster
-
-lj38 = LennardJonesCluster(num_atoms=38)
-abc = CurvatureAdaptiveABC(lj38,
-                           bias_height_type="adaptive",
-                           bias_covariance_type="adaptive")
-abc.run(max_iterations=200, stopping_minima_number=5)
-```
-
------
-
-## Citation
-
-If you use **CA-ABC** in your research, we kindly ask that you attribute the source (for now) as:
-
-Nirenberg, S., Ding, L., & Do, C. *Curvature-Adaptive Autonomous Basin Climbing*. github.com/SimonNir/ca_abc 
-
-
-<!-- cite the following work:
-
-Nirenberg, S., Ding, L., & Do, C. (TBD). *Curvature-Adaptive Autonomous Basin Climbing: Robust On-The-Fly Pathway Sampling for Rugged Energy Landscapes*. *[Journal Name]*. -->
-
------
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
------
-
-## Documentation
-
-Full API documentation is available in the code docstrings. Key classes:
-
-  * `CurvatureAdaptiveABC`: Main simulation class
-  * `ABCAnalysis`: Visualization and analysis tools
-  * `Potential`: Defines a generic PES
-  * `ASEPotential`: Defines a PES from ASE Atoms; automatically excludes fixed atoms 
-  * `CanonicalASEPotential`: Defines an ASEPotential in a canonical frame (3N-6 DOF); 
-  automatically handles derivative transforms 
-  * `Optimizer`: Defines a generic Optimizer 
------
-
-## Contributing
-
-Contributions are welcome\! Please open an issue or pull request on GitHub. Feel free to refer to the Known Issues and Future Directions section below for details. 
-
------
-
-## Known Issues
-
-  * BFGS Hessian approximation degrades in high dimensions (\>300D); Lanczos method likely becomes preferable.
-  * For extremely high-dimensional problems (\>1000D), bias storage may become memory-intensive; it is recommended to restrict biasing to particular atoms and dump trajectory often, to decrease storage needs 
-  * ASE interface may require additional configuration for some calculators
-  * dynamic deltas >> 1 often perform far better than when restricted to the expected (0,1] domain; this might be due to the imperfection of the BFGS hessian or anhamonicity of the landscapes
+  - `CurvatureAdaptiveABC`: The main simulation controller.
+  - `ABCAnalysis`: Tools for plotting and analyzing simulation results.
+  - `potentials`: Contains example potentials and base classes for ASE integration.
+      - `CanonicalASEPotential`: A powerful wrapper for ASE `Atoms` objects that handles rotations and translations, working in the 3N-6 canonical degrees of freedom.
+  - `optimizers`: Contains the backend optimizers (e.g., `FIREOptimizer`, `ScipyOptimizer`).
 
 -----
 
 ## Future Directions
 
-  * Set up deeper parallelization, with multiple different runs at different positions on the PES sharing a single bias list
-  * Improve height metric with descent and past barrier information, possibly by incorporating methods like those of Cao et al.
-  * Implement Fan et al.'s ABC-E algorithm for transition networks, along with kMC support
-  * (Machine) Learn bias covariance from descent information, allowing adaptiveness and flattening in anharmonic regions
-  * Incorporate dynamic shifts between BFGS and FIRE for speedups (FIRE is best near saddle points; BFGS is orders of magnitude faster elsewhere, but often tunnels through barriers instead of neatly spilling)
-  * Set up LAMMPS calculator (very easy in theory via ASE support)
+This project is in active development. Key future directions include:
+
+  - **Parallelization**: Implement multi-walker schemes where different runs on the PES share a single, global bias list.
+  - **Improved Biasing Metrics**: Incorporate descent history and barrier information to enhance bias height determination, inspired by methods from Cao et al.
+  - **Transition Network Analysis**: Implement algorithms like ABC-E (Fan et al.) for automated transition network construction and kMC support.
+  - **Machine Learning Integration**: Learn the bias covariance from descent information to better handle anharmonic regions.
+  - **Hybrid Optimizers**: Dynamically switch between `FIRE` (robust near saddles) and `BFGS` (fast in harmonic regions) for optimal performance.
+  - **Expanded Calculator Support**: Add a dedicated LAMMPS calculator interface via ASE.
 
 -----
 
-## Support
+## Known Issues
 
-For questions or support, please contact simon\_nirenberg@brown.edu
+  - The BFGS Hessian approximation can degrade in very high dimensions (\>300D), where the Lanczos method may be preferable.
+  - For extremely high-dimensional systems (\>1000D), bias storage can be memory-intensive. It is recommended to use `biased_atom_indices` and frequent data dumping to manage memory.
+  - The dynamic EMA scaling for bias covariance often performs best when allowed to exceed its expected `(0, 1]` domain, possibly due to Hessian inaccuracies or landscape anharmonicity.
+
+-----
+
+## Contributing
+
+Contributions are welcome\! Please feel free to open an issue to discuss a bug or feature, or submit a pull request.
+
+-----
+
+## Citation
+
+A preprint describing the algorithm and implementation is in preparation. For now, if you use this code in your research, please cite the GitHub repository:
+
+```
+Nirenberg, S., Ding, L., & Do, C. (2025). Curvature-Adaptive Autonomous Basin Climbing. GitHub. [https://github.com/SimonNir/ca_abc](https://github.com/SimonNir/ca_abc)
+```
 
 -----
 
 ## Acknowledgements
-This research was supported in part by an appointment to the Oak Ridge National Laboratory Research Student Internships
-Program, sponsored by the U.S. Department of Energy and administered by the Oak Ridge Institute for Science and Education.
+
+This research was supported in part by an appointment to the Oak Ridge National Laboratory Research Student Internships Program, sponsored by the U.S. Department of Energy and administered by the Oak Ridge Institute for Science and Education.
+
+-----
+
+## License
+
+This project is licensed under the **MIT License**. See the `LICENSE` file for details.

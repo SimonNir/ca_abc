@@ -1,7 +1,7 @@
 from ca_abc import CurvatureAdaptiveABC
-from src.ca_abc.optimizers import *
-from potentials import Complex1D, DoubleWell1D
-from analysis import ABCAnalysis
+from ca_abc.optimizers import * 
+from ca_abc.potentials import Complex1D, DoubleWell1D
+from ca_abc.analysis import ABCAnalysis
 import numpy as np
 
 def run_1d_simulation():
@@ -14,7 +14,7 @@ def run_1d_simulation():
         curvature_method="bfgs", 
         dump_every=10000,
 
-        perturb_type="fixed",
+        perturb_type="none",
         default_perturbation_size=0.03,
         scale_perturb_by_curvature=True,
         curvature_perturbation_scale= 0.1, 
@@ -32,14 +32,15 @@ def run_1d_simulation():
 
 
         max_descent_steps=1000, 
+        min_descent_steps=10,
         descent_convergence_threshold=1e-4
     )
 
     myopt = FIREOptimizer(abc)
     # myopt = ScipyOptimizer(abc, "BFGS")
     # myopt = ASEOptimizer(abc, optimizer_class='FIRE')
-    abc.run(max_iterations=1800, optimizer=myopt, verbose=True)
-        
+    abc.run(max_iterations=1800, stopping_minima_number=5, optimizer=myopt, verbose=False)
+
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
     analyzer.plot_summary(save_plots=True, filename="1d_default_fire.png", plot_type="neither")

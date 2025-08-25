@@ -6,14 +6,16 @@ import numpy as np
 
 def run_2d_simulation():
     """Run 2D ABC simulation with Muller-Brown potential."""
-    np.random.seed(420)
+    # np.random.seed(420)
     print("Starting 2D ABC Simulation")
     print("=" * 50)
 
-    height = 4.556086
-    cov = 0.0088451956
+    # height = 4.556086
+    height = 2
+    # cov = 0.0088451956
+    cov = 0.002
     ad_factor = 1.5
-    bias_type = "adaptive"
+    bias_type = "fixed"
     
     abc = CurvatureAdaptiveABC(
         potential=StandardMullerBrown2D(),
@@ -21,8 +23,8 @@ def run_2d_simulation():
         curvature_method="bfgs",
         dump_every=10000,
 
-        perturb_type="fixed",
-        default_perturbation_size=0.005,
+        perturb_type="stochastic",
+        default_perturbation_size=0.001,
         scale_perturb_by_curvature=False,
         # min_perturbation_size=0.005/1.5,
         max_perturbation_size=0.005*1.5,
@@ -44,22 +46,17 @@ def run_2d_simulation():
         max_descent_steps=1000,
         descent_convergence_threshold=1e-5, 
         max_acceptable_force_mag=1e99,
+        min_descent_steps=0,
     )
     
     # opt = ScipyOptimizer(abc)  
-    opt = FIREOptimizer(abc)
-    abc.run(max_iterations=8000, stopping_minima_number=3, optimizer=opt, verbose=True)
+    opt = FIREOptimizer(abc, max_step_size=None) #0.05
+    abc.run(max_iterations=8000, stopping_minima_number=3, optimizer=opt, verbose=False, verbose_opt=False)
 
     # Create analysis and plots
     analyzer = ABCAnalysis(abc)
-    # analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
-    # analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
-
-    # fixed: 52002
-    # adaptive cov: 41283
-    # adaptive cov + height: 32335
-    # adaptive cov + height + unscaled perturb:27850
-    # adaptive cov + height + scaled perturb: 30205
+    analyzer.plot_summary(save_plots=False, filename="2d_smart_abc.png", plot_type='both')
+    analyzer.plot_diagnostics(save_plots=False, filename="2d_smart_abc_diagnostics.png", plot_type="neither")
 
 def main():
         run_2d_simulation()

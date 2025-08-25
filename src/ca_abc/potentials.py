@@ -42,13 +42,9 @@ class Potential(ABC):
         Wrapper for _gradient with built-in force magnitude limiting
         DO NOT EDIT: Users should implement _gradient() for analytical gradient calculation
         """
-        try:
-            grad = self._gradient(position)
-        except Exception as e:
-            print(f"Exception in gradient calculation: {e}")
-            grad = np.zeros_like(position)
+        grad = self._gradient(position)
         
-        # Add NaN check
+        # NaN check
         if np.any(np.isnan(grad)):
             print("NaN detected in gradient! Resetting to zeros.")
             grad = np.zeros_like(position)

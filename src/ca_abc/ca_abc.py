@@ -29,7 +29,7 @@ class CurvatureAdaptiveABC:
         curvature_method="bfgs", # 'finite_diff', 'bfgs', or 'lanczos' (experimental)
         
         # Perturbation strategy
-        perturb_type="adaptive",  # None - Kushima et al. style deterministic exploration; no perturbation
+        perturb_type="adaptive",  # None or "none" - Kushima et al. style deterministic exploration; no perturbation
         # "adaptive" - deterministic softmode perturbation
         # "stochastic" - random perturbation, allowing parallel exploration
         # "adaptive_stochastic" - randomized softmode perturbation (randomly selects +v or -v for softest mode v)
@@ -70,15 +70,94 @@ class CurvatureAdaptiveABC:
 
         biased_atom_indices = None, # For atomistic simulations, specifies which atoms to apply bias to; by default (None), applies to all atoms
     ):
-        """
-        Initialize the SmartABC sampler.
-        
+        """Initializes the Curvature-Adaptive Autonomous Basin Climbing algorithm.
+
+        This class implements the ABC algorithm to explore potential energy
+        surfaces, using local curvature to adaptively modify the biasing and
+        perturbation strategies for efficient landscape exploration.
+
         Args:
-            potential: Potential energy surface to sample
-            expected_barrier_height: Estimated average barrier height (for scaling)
-            
-            See README.md for full documentation of optional parameters.
+            potential (object): The potential energy surface to explore. Must
+                provide `potential()` and `gradient()` methods.
+
+            ## Setup Parameters
+            starting_position (np.ndarray, optional): Initial coordinates for the
+                simulation. If None, uses the potential's default start.
+            dump_every (int, optional): Frequency (in iterations) for saving
+                simulation data to disk.
+            dump_folder (str, optional): Directory to save data dumps.
+
+            ## Curvature Estimation
+            curvature_method (str, optional): Method to estimate the Hessian.
+                Options: 'bfgs', 'finite_diff', 'lanczos'. Defaults to 'bfgs'.
+
+            ## Perturbation Strategy
+            perturb_type (str, optional): Strategy for perturbing the system
+                after a minimum is found. Defaults to "adaptive".
+                - "none": No perturbation is applied (deterministic non-adaptive).
+                - "stochastic": Perturbs along a fully random direction.
+                - "adaptive_stochastic": Perturbs along the softest Hessian
+                  mode with a randomly chosen sign (+v or -v).
+                - "adaptive": Deterministically perturbs along the softest mode,
+                  aligning it with the last displacement vector for consistency.
+            scale_perturb_by_curvature (bool, optional): If True, scales the
+                perturbation size based on the softest mode's curvature.
+            default_perturbation_size (float, optional): Default perturbation
+                magnitude if not scaling by curvature.
+            min_perturbation_size (float, optional): Minimum allowed perturbation.
+            max_perturbation_size (float, optional): Maximum allowed perturbation.
+            curvature_perturbation_scale (float, optional): Scaling factor for
+                curvature-based perturbation size if EMA is disabled.
+
+            ## Biasing Strategy
+            bias_height_type (str, optional): Method for determining bias height.
+                'adaptive' uses curvature, otherwise uses default.
+            default_bias_height (float, optional): Default height for Gaussian bias.
+            min_bias_height (float, optional): Minimum allowed bias height.
+            max_bias_height (float, optional): Maximum allowed bias height.
+            curvature_bias_height_scale (float, optional): Scaling factor for
+                curvature-based bias height if EMA is disabled.
+            bias_covariance_type (str, optional): Method for determining bias
+                covariance. 'adaptive' uses the inverse Hessian.
+            default_bias_covariance (float or np.ndarray, optional): Default
+                covariance for Gaussian bias.
+            min_bias_covariance (float, optional): Minimum allowed variance along
+                any principal axis of the bias.
+            max_bias_covariance (float, optional): Maximum allowed variance.
+            curvature_bias_covariance_scale (float, optional): Scaling factor
+                for curvature-based covariance if EMA is disabled.
+
+            ## Adaptive Scaling
+            use_ema_adaptive_scaling (bool, optional): If True, uses an
+                Exponential Moving Average to smooth adaptive parameters over time.
+            ema_alpha (float, optional): Smoothing factor for EMA (0 < alpha <= 1).
+            conservative_ema_delta (bool, optional): If True, prevents the EMA
+                logic from excessively widening the bias covariance.
+
+            ## Convergence and Uniqueness
+            energy_diff_threshold (float, optional): Energy threshold to consider a
+                point a new, unbiased minimum.
+            struc_uniqueness_rmsd_threshold (float, optional): RMSD threshold
+                to determine if a found minimum is unique.
+            bias_filtering_cutoff (int, optional): Number of biases after which
+                to start spatial filtering for performance.
+
+            ## Descent and Optimization
+            descent_convergence_threshold (float, optional): Force threshold for
+                optimizer convergence.
+            min_descent_steps (int, optional): Minimum number of steps the
+                optimizer must take, even if converged.
+            max_descent_steps (int, optional): Maximum number of steps for the
+                optimizer per iteration.
+            max_acceptable_force_mag (float, optional): A cap for clipping
+                excessively large forces.
+
+            ## Subspace Biasing
+            biased_atom_indices (list[int], optional): If provided, applies biases
+                and perturbations only to the specified atom indices. Defaults
+                to all atoms.
         """
+
         self.potential = potential
         
         # Set up configuration parameters
@@ -89,8 +168,13 @@ class CurvatureAdaptiveABC:
 
          # Initialize state variables
         self.reset(starting_position)
-        
-        self.perturb_type = perturb_type
+
+        if str(perturb_type).lower() in ['adaptive', 'none', 'stochastic', 'adaptive_stochastic']:
+            self.perturb_type = perturb_type
+        else:
+            raise ValueError("Invalid perturbation type specified")
+
+
         self.scale_perturb_by_curvature = scale_perturb_by_curvature
         self.default_perturbation_size = default_perturbation_size
         if min_perturbation_size is None: 
@@ -825,15 +909,79 @@ class CurvatureAdaptiveABC:
             raise RuntimeError("Hessian Unavailable")
 
     def perturb(self, type="adaptive", verbose=False):
-        if type == "adaptive" and self.most_recent_hessian is not None:
-            direction, curvature = self.get_softest_hessian_mode(self.position)
+        """
+        Applies a perturbation to self.position based on the specified type.
+        Falls back to 'none' for adaptive and 'stochastic' for adaptive_stochastic if Hessian is missing.
+        """
+        type_lower = None if type is None else str(type).lower()
 
-            if np.random.rand() < 0.5:
-                direction = direction
+        # Mode 1: No perturbation
+        if type_lower in [None, "none"]:
+            if verbose:
+                print("Perturbation type is 'none' or None. Skipping perturbation.")
+            return
+
+        # Mode 2: Fully random (stochastic) perturbation
+        if type_lower == "stochastic":
+            direction = np.random.randn(self.dimension)
+            scale = self.default_perturbation_size
+            self.position += scale * (direction / np.linalg.norm(direction))
+            if verbose:
+                print(f"Applied stochastic perturbation of size {scale}.")
+            return
+
+        # Adaptive modes require Hessian
+        if type_lower in ["adaptive", "adaptive_stochastic"] and self.most_recent_hessian is None:
+            if type_lower == "adaptive":
+                if verbose:
+                    print("Warning: Adaptive perturbation requested, but no Hessian available. Falling back to 'none'.")
+                return  # 'none' means no perturbation
+            else:  # adaptive_stochastic
+                if verbose:
+                    print("Warning: Adaptive stochastic requested, but no Hessian available. Falling back to 'stochastic'.")
+                self.perturb(type="stochastic", verbose=verbose)
+                return
+
+        # Get the softest mode for adaptive perturbations
+        softest_mode, curvature = self.get_softest_hessian_mode(self.position)
+        direction = None
+
+        # Mode 3: Deterministic adaptive perturbation
+        if type_lower == "adaptive":
+            if len(self.trajectory) < 2:
+                if verbose:
+                    print("Warning: Deterministic 'adaptive' mode needs >1 trajectory point. Defaulting to positive sign.")
+                sign = 1.0
             else:
-                direction = -direction
+                ref_vector = self.trajectory[-1] - self.trajectory[-2]
+                if np.linalg.norm(ref_vector) > 1e-9:
+                    dot = np.dot(ref_vector, softest_mode)
+                    sign = np.sign(dot) if dot != 0 else 1.0
+                else:
+                    sign = 1.0
+            direction = sign * softest_mode
+            if verbose:
+                print(f"Applied deterministic adaptive perturbation with alignment sign {sign}.")
 
-            if self.scale_perturb_by_curvature:
+        # Mode 4: Randomized adaptive perturbation
+        elif type_lower == "adaptive_stochastic":
+            sign = 1.0 if np.random.rand() < 0.5 else -1.0
+            direction = sign * softest_mode
+            if verbose:
+                print(f"Applied randomized adaptive perturbation with sign {sign}.")
+
+        else:
+            print(f"Warning: Unrecognized perturbation type '{type}'. Falling back to 'stochastic'.")
+            self.perturb(type="stochastic", verbose=verbose)
+            return
+
+        # Determine perturbation magnitude (scale) for all adaptive modes
+        if self.scale_perturb_by_curvature:
+            if curvature <= 1e-9:  # Avoid division by zero
+                if verbose:
+                    print(f"Warning: Non-positive or zero curvature ({curvature:.4f}). Using default size.")
+                scale = self.default_perturbation_size
+            else:
                 if self.use_ema_adaptive_scaling:
                     log_scale = np.log(self.curvature_perturbation_scale / np.sqrt(curvature))
                     if self.log_running_perturb_ema is None:
@@ -846,20 +994,14 @@ class CurvatureAdaptiveABC:
                     proposed_scale = np.exp(self.log_running_perturb_ema)
                 else:
                     proposed_scale = self.curvature_perturbation_scale / np.sqrt(curvature)
-
                 scale = np.clip(proposed_scale, self.min_perturbation_size, self.max_perturbation_size)
                 if verbose:
-                    print("Proposed perturbation distance:", proposed_scale)
-                    print("Clipped perturbation distance:", scale)
-            else:
-                scale = self.default_perturbation_size
+                    print(f"Proposed perturbation distance: {proposed_scale:.4f}, clipped to: {scale:.4f}")
         else:
-            direction = np.random.rand(self.dimension) * 2 - 1
             scale = self.default_perturbation_size
 
-        direction = direction / np.linalg.norm(direction)
+        # Apply the final perturbation
         self.position += scale * direction
-
     
     def run(self, optimizer=None, max_iterations=100, verbose=True, verbose_opt=False,
             save_summary=False, summary_file=None, stopping_minima_number=None, 
@@ -896,13 +1038,12 @@ class CurvatureAdaptiveABC:
                 if stopping_minima_number is not None and len(self.minima) >= stopping_minima_number: 
                     break  
                     
-                if verbose:
-                    print(f"Iteration {iteration+1}/{max_iterations}: "
-                        f"Descent converged: {converged}, "
-                        # f"Position:{self.position}, "
-                        f"Unbiased Energy: {self.unbiased_energies[-1]}",
-                        f"Biased Energy: {self.biased_energies[-1]}")
-                    print()
+                print(f"Iteration {iteration+1}/{max_iterations}: "
+                    f"Descent converged: {converged}, "
+                    # f"Position:{self.position}, "
+                    f"Unbiased Energy: {self.unbiased_energies[-1]}",
+                    f"Biased Energy: {self.biased_energies[-1]}")
+                print()
 
             print(f"Simulation completed.\n")
         except KeyboardInterrupt:

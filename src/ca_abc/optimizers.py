@@ -33,7 +33,7 @@ class Optimizer(ABC):
             except NotImplementedError:
                 unbiased_force = None
             biased_force = self.abc_sim.compute_biased_force(x, unbiased_force)
-           
+            
             # Record trajectory and map
             self.trajectory.append(x.copy())
             index = len(self.trajectory) - 1
@@ -71,15 +71,7 @@ class Optimizer(ABC):
     def descend(self, x0, max_steps=None, convergence_threshold=None, min_steps=None, verbose=False):
         """Universal descent method (same for all backends)"""
         self._reset_state()
-        if min_steps is not None and min_steps != 0:
-            if "min_steps" not in self._run_optimization.__code__.co_varnames:
-                print("Warning: selected optimizer has no min_steps option; proceeding with min_steps=0")
-                result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
-            else:
-                result = self._run_optimization(x0, max_steps, convergence_threshold,
-                                                min_steps=min_steps, verbose=verbose)
-        else:
-            result = self._run_optimization(x0, max_steps, convergence_threshold, verbose=verbose)
+        result = self._run_optimization(x0, max_steps, convergence_threshold, min_steps=min_steps, verbose=verbose)
           # Only compute fallback if optimizer did NOT already provide a Hessian
         if result.get('hess_inv', None) is None and self.abc_sim.curvature_method.lower() == 'adaptive':
             result['hess_inv'] = self.hess_inv
@@ -123,7 +115,7 @@ class Optimizer(ABC):
         raise AttributeError("Inverse Hessian not available; run optimizer or accumulate enough trajectory data.")
     
     @abstractmethod
-    def _run_optimization(self, x0, max_steps, convergence_threshold, verbose=False):
+    def _run_optimization(self, x0, max_steps, convergence_threshold, min_steps=None, verbose=False):
         """
         Backend-specific optimization (implemented by child classes)
         Should call _compute()
@@ -164,7 +156,7 @@ def bfgs_inverse_hessian(positions, forces, assume_forces_are_neg_grads=True):
     return updater.get_matrix()
 
 class FIREOptimizer(Optimizer):
-    def __init__(self, abc_sim, dt=0.05, alpha=0.1, dt_max=0.1, N_min=5,
+    def __init__(self, abc_sim, dt=0.01, alpha=0.1, dt_max=0.05, N_min=5,
                  f_inc=1.05, f_dec=0.5, alpha_dec=0.95, max_steps=1000,
                  f_tol=1e-4, max_step_size=None, velocity_damping=0.9):
         """
@@ -188,7 +180,7 @@ class FIREOptimizer(Optimizer):
         self.v = None
         self.accepted_positions = []
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, min_steps=None, verbose=False):
         x = x0.copy()
         self.v = np.zeros_like(x)
         dt = self.dt
@@ -202,6 +194,7 @@ class FIREOptimizer(Optimizer):
         f_tol = convergence_threshold or self.f_tol
         max_step_size = self.max_step_size
         velocity_damping = self.velocity_damping
+        min_steps = min_steps or 0
 
         n_pos = 0
         # Don't add initial position here - let the first _compute() call handle it
@@ -225,7 +218,7 @@ class FIREOptimizer(Optimizer):
 
             fmax = np.max(np.abs(force))
 
-            if fmax < f_tol:
+            if fmax < f_tol and step + 1 >= min_steps:
                 break
 
             self.v += dt * force
@@ -282,6 +275,7 @@ class FIREOptimizer(Optimizer):
     def _accepted_steps(self):
         return self.accepted_positions.copy()
     
+    
 from scipy.optimize import minimize
 import numpy as np
 
@@ -300,11 +294,15 @@ class ScipyOptimizer(Optimizer):
         self._result = None
         self.accepted_steps = []
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, min_steps=None, verbose=False):
         self._reset_state()
         self.accepted_steps = [x0.copy()]
         last_accepted_x = x0.copy()
+        min_steps_val = min_steps or 0
         
+        # Flag to track if we perform a second run
+        was_two_stage_run = False
+
         # Common options
         options = self.optimizer_kwargs.copy()
         if max_steps is not None:
@@ -336,7 +334,7 @@ class ScipyOptimizer(Optimizer):
                 self.accepted_steps.append(x.copy())
                 last_accepted_x = x.copy()
 
-        self._result = minimize(
+        first_result = minimize(
             fun=lambda x: self._compute(x)[0],
             x0=x0,
             method=self.method,
@@ -345,7 +343,60 @@ class ScipyOptimizer(Optimizer):
             options=options,
             **extra_args
         )
-        return self._package_result()
+        
+        self._result = first_result
+        steps_taken = first_result.nit
+
+        # Check if min_steps is met and we didn't hit max_steps
+        should_continue = steps_taken < min_steps_val
+        if max_steps is not None and steps_taken >= max_steps:
+            should_continue = False
+
+        if should_continue:
+            was_two_stage_run = True # Mark that we're doing a second run
+            remaining_steps = min_steps_val - steps_taken
+            x1 = self._result.x
+            
+            options_cont = options.copy()
+            options_cont['maxiter'] = remaining_steps
+            
+            # Disable convergence checks
+            if 'gtol' in options_cont: options_cont['gtol'] = -1.0
+            if 'ftol' in options_cont: options_cont['ftol'] = -1.0
+            if 'xtol' in options_cont: options_cont['xtol'] = -1.0
+            
+            second_result = minimize(
+                fun=lambda x: self._compute(x)[0],
+                x0=x1,
+                method=self.method,
+                jac=lambda x: self._compute(x)[1],
+                callback=callback,
+                options=options_cont,
+                **extra_args
+            )
+            
+            # Combine results
+            self._result = second_result
+            self._result.success = first_result.success
+            self._result.nit += first_result.nit
+        
+        # Package the final result from the SciPy object
+        final_result = self._package_result()
+
+        # **NEW**: If we did a two-stage run, override the Hessian
+        if was_two_stage_run and len(self.trajectory) >= 2:
+            print("Rebuilding Hessian from full trajectory after two-stage run.")
+            try:
+                # Rebuild from the complete trajectory for better accuracy
+                full_traj_hess_inv = bfgs_inverse_hessian(self.trajectory, self.biased_forces)
+                final_result['hess_inv'] = full_traj_hess_inv
+            except Exception as e:
+                print(f"Warning: Could not recompute BFGS inverse Hessian from full trajectory: {e}")
+                # Fallback to SciPy's (likely poor) hessian or None
+                if 'hess_inv' not in final_result:
+                    final_result['hess_inv'] = None
+        
+        return final_result
     
     from scipy.sparse.linalg import LinearOperator
     def _construct_l_bfgs_hess_inv(self, hess_inv_operator: LinearOperator):
@@ -413,11 +464,14 @@ class ASEOptimizer(Optimizer):
         self._current_atoms = None
         self._result = None  # For consistency with ScipyOptimizer
 
-    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, verbose=False):        
+    def _run_optimization(self, x0, max_steps=None, convergence_threshold=None, min_steps=None, verbose=False):      
         self._reset_state()
         self.accepted_positions = []
         self._last_accepted_pos = None
         self.convergence_threshold = convergence_threshold
+        min_steps_val = min_steps or 0
+        effective_max_steps = max_steps if max_steps else 1000
+        fmax_threshold = convergence_threshold if convergence_threshold else 0.05
 
         # Handle both regular and canonical PES cases
         if isinstance(self.abc_sim.potential, ASEPotential):
@@ -426,9 +480,6 @@ class ASEOptimizer(Optimizer):
             else:
                 atoms = self.abc_sim.potential.atoms.copy()
             atoms.set_positions(x0.reshape(-1, 3))
-        # elif hasattr(self.abc_sim.potential, 'atoms'):  # For canonical PES
-            # atoms = self.abc_sim.potential.atoms.copy()
-        #     atoms.set_positions(x0.reshape(-1, 3))
         else:
             # Fallback for non-ASE potentials
             from ase import Atoms
@@ -440,17 +491,12 @@ class ASEOptimizer(Optimizer):
         self._register_accepted_step(x0)
 
         optimizer_mapping = {
-            'BFGS': aBFGS,
-            'LBFGS': LBFGS,
-            'GPMin': GPMin,
-            'FIRE': FIRE,
-            'MDMin': MDMin,
-            'BFGSLineSearch': BFGSLineSearch,
+            'BFGS': aBFGS, 'LBFGS': LBFGS, 'GPMin': GPMin,
+            'FIRE': FIRE, 'MDMin': MDMin, 'BFGSLineSearch': BFGSLineSearch,
         }
         
         OptimizerClass = optimizer_mapping.get(self.optimizer_class, aBFGS)
         optimizer_kwargs = self.ase_optimizer_kwargs.copy()
-
             
         self._ase_optimizer = OptimizerClass(atoms, **optimizer_kwargs)
 
@@ -462,15 +508,24 @@ class ASEOptimizer(Optimizer):
 
         self._ase_optimizer.attach(callback)
 
+        converged_in_first_run = False
+        message = "Optimization did not run"
         try:
-            converged = self._ase_optimizer.run(
-                fmax=convergence_threshold if convergence_threshold else 0.05,
-                steps=max_steps if max_steps else 1000
+            converged_in_first_run = self._ase_optimizer.run(
+                fmax=fmax_threshold,
+                steps=effective_max_steps
             )
-            message = "Optimization converged" if converged else "Optimization did not converge"
+            message = "Optimization converged" if converged_in_first_run else "Optimization did not converge"
+
+            steps_taken = self._ase_optimizer.get_number_of_steps()
+            
+            if steps_taken < min_steps_val and steps_taken < effective_max_steps:
+                remaining_steps = min_steps_val - steps_taken
+                self._ase_optimizer.run(fmax=-1.0, steps=remaining_steps)
+
         except Exception as e:
             print(f"Optimization failed: {e}")
-            converged = False
+            converged_in_first_run = False
             message = str(e)
 
         final_pos = self._current_atoms.get_positions().flatten()
@@ -480,9 +535,9 @@ class ASEOptimizer(Optimizer):
         # Package result similar to ScipyOptimizer for consistency
         self._result = {
             'x': final_pos,
-            'success': converged,
+            'success': converged_in_first_run,
             'message': message,
-            'nit': len(self.accepted_positions),
+            'nit': self._ase_optimizer.get_number_of_steps() if self._ase_optimizer else 0,
             'hess_inv': None  # ASE optimizers don't provide Hessian info
         }
         
@@ -547,4 +602,4 @@ class _ASECalculatorWrapper(Calculator):
 
     def get_stress(self, atoms=None, **kwargs):
         # Dummy implementation required by some ASE optimizers
-        return np.zeros(6)    
+        return np.zeros(6)

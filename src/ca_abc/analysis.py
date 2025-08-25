@@ -424,41 +424,46 @@ class ABCAnalysis:
         return analyzer.analyze_minima_saddles(proximity_radius=basin_radius)
     
   
-    def create_basin_filling_gif(self, filename="basin_filling.gif", fps=15):
+    def create_basin_filling_gif(self, filename="basin_filling.gif", fps=30):
         """
-        SIMPLE basin filling animation - shows potential with accumulating biases
+        Faster basin filling animation - incrementally updates the biased potential
         """
-        fig, ax = plt.subplots(figsize=(8,5))
+        import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation, PillowWriter
-        
+        import numpy as np
+
+        fig, ax = plt.subplots(figsize=(8,5))
+
         # Get data
         x = np.linspace(*self.abc.potential.plot_range(), 500)
         orig_potential = self.abc.potential.potential(x)
         n_frames = len(self.abc.bias_list)
-        
+
+        # Precompute each bias contribution once
+        bias_curves = [bias.potential(x[:, None]) for bias in self.abc.bias_list]
+
+        # Initialize cumulative potential
+        F = orig_potential.copy()
+
         # Initial plot
         ax.plot(x, orig_potential, 'k-', label='Original Potential')
-        line, = ax.plot(x, orig_potential, 'b-', label='Biased Potential')
+        line, = ax.plot(x, F, 'b-', label='Biased Potential')
         ax.set_title('Potential Energy Landscape')
         ax.set_xlabel('x')
         ax.set_ylabel('Energy')
         ax.legend()
         ax.grid(True, alpha=0.3)
-        
-        # Simple update function
+
+        # Update function with incremental update
         def update(frame):
-            # Calculate current potential
-            F = orig_potential.copy()
-            for bias in self.abc.bias_list[:frame+1]:
-                F += bias.potential(x[:,None])
-            
-            # Update line
-            line.set_ydata(F)            
+            nonlocal F
+            F = F + bias_curves[frame]   # just add the new bias
+            line.set_ydata(F)
             return [line]
-        
+
         # Create animation
         anim = FuncAnimation(fig, update, frames=n_frames, interval=50, blit=True)
         anim.save(filename, writer='pillow', fps=fps)
         plt.close()
-        
+
         print(f"Saved animation to {filename}")

@@ -17,7 +17,7 @@ This package is designed for discovering reaction pathways, transition states, a
 -   **Automated Discovery**: Combines minima discovery and transition state identification into a single, autonomous workflow.
 -   **Curvature-Adaptive Biasing**: Uses local Hessian information (from BFGS or other methods) to shape anisotropic Gaussian biases, effectively filling basins and encouraging escapes.
 -   **Intelligent Perturbations**: Guides escapes along soft-mode directions (low-curvature pathways) for physically meaningful transitions.
--   **Flexible Exploration Modes**: Supports fully **deterministic**, **randomized-adaptive**, and **stochastic** exploration strategies.
+-   **Flexible Exploration Modes**: Supports both fully **deterministic** and **stochastic** exploration strategies, well suited for parallelization.
 -   **ASE Integration**: Works seamlessly with the [Atomic Simulation Environment (ASE)](https://wiki.fysik.dtu.dk/ase/) for advanced atomistic simulations.
 -   **Subspace Biasing**: Easily restrict biasing and perturbations to specific atoms or degrees of freedom using `biased_atom_indices`.
 

@@ -4,7 +4,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/ca-abc.svg?logo=pypi)](https://pypi.org/project/ca-abc/) <!-- Placeholder -->
 
-A Python implementation of the **Autonomous Basin Climbing (ABC)** algorithm for the efficient, on-the-fly exploration of complex potential energy surfaces (PES).
+A Python implementation of the **Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)** algorithm for the efficient, on-the-fly exploration of complex potential energy surfaces (PES).
 
 This package is designed for discovering reaction pathways, transition states, and local minima in chemistry, physics, and materials science simulations without requiring predefined collective variables or reaction endpoints. To our knowledge, this is the only publicly available Python implementation of the ABC algorithm.
 

@@ -27,7 +27,7 @@ This package is designed for discovering reaction pathways, transition states, a
 
 First, clone the repository and navigate into the directory:
 ```bash
-git clone [https://github.com/SimonNir/ca-abc.git](https://github.com/SimonNir/ca-abc.git)
+git clone https://github.com/SimonNir/ca-abc.git
 cd ca_abc
 ````
 

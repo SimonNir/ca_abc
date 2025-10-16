@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=abc_19
+#SBATCH --output=logs/abc_19.out
+#SBATCH --error=logs/abc_19.err
+#SBATCH -N 1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --time=04:00:00
+#SBATCH --mem=3G
+#SBATCH -p burst
+#SBATCH -A birthright
+
+source ~/abc_venv/bin/activate
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+
+python run_one.py 451 228 854 1469 1238 112 654 1151 819

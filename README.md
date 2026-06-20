@@ -6,7 +6,7 @@
 
 A Python implementation of the **Curvature-Adaptive Autonomous Basin Climbing (CA-ABC)** algorithm for the efficient, on-the-fly exploration of complex potential energy surfaces (PES).
 
-This package is designed for discovering reaction pathways, transition states, and local minima in chemistry, physics, and materials science simulations without requiring predefined collective variables or reaction endpoints. To our knowledge, this is the only publicly available Python implementation of the ABC algorithm.
+This package is designed for discovering reaction pathways, transition states, and local minima in chemistry, physics, and materials science simulations without requiring predefined collective variables or reaction endpoints. To our knowledge, this is the only publicly available Python implementation of the ABC algorithm, originally introduced by Kushima et al. in [J. Chem. Phys. 130, 224504 (2009)](https://doi.org/10.1063/1.3139006). We also incorporate improvements introduced by Cao et al. in [Phys. Rev. E 86, 016710](https://doi.org/10.1103/PhysRevE.86.016710) 
 
 
 
@@ -144,7 +144,7 @@ Contributions are welcome\! Please feel free to open an issue to discuss a bug o
 
 ## Citation
 
-A preprint describing the algorithm and implementation is in preparation. For now, if you use this code in your research, please cite the GitHub repository:
+If you use this code in your research, please cite the GitHub repository:
 
 ```
 Nirenberg, S., Ding, L., & Do, C. (2025). Curvature-Adaptive Autonomous Basin Climbing. GitHub. [https://github.com/SimonNir/ca_abc](https://github.com/SimonNir/ca_abc)
